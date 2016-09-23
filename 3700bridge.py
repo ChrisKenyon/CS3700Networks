@@ -1,40 +1,15 @@
 #!/usr/bin/python -u
 # The -u makes output unbuffered, so it will show up immediately
-import sys
-import socket
-import select
-import time
 import json
+import select
+import socket
+import sys
+import time
 
-
-class Bridge:
-    ports = []
-    neighbors = []
-    last_received = {}
-    last_sent = None
-    def __init__(self, bridge_id, LANs):
-        self.bridge_id = bridge_id
-        self.root_id = bridge_id
-        self.cost_to_root = 0
-        self.ports = range(len(LANs))
-        self.sockets = []
-        # creates sockets and connects to them
-        for x in range(len(LAN)):
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-            s.connect(pad(LAN[x]))
-            self.sockets.append(s)
-        print "Bridge " + id + " starting up\n"
-
-    def broadcast(self):
-        for sock in self.sockets:
-            bpdu = BPDU(self.bridge_id, self.root_id, self.cost_to_root)
-            sock.send(str(bpdu))
-
-    def receive(self, port, bpdu):
-        # TODO do we need port? Tracking which neighbor to which port?
-        data = json.loads(bpdu)
-        last_received[data.get("source")] = time.time()
-
+# BPDU format:
+#
+# {"source": <bridge ID>, "dest": <ID or 'ffff'>, "type": <bpdu or data>, "message": <message data>}
+# {"source":"02a1", "dest":"ffff", "type": "bpdu", "message":{"id":"02a1", "root":"02a1", "cost":0}}
 
 # A BPDU class to keep the information about this bridge
 class BPDU:
@@ -56,14 +31,37 @@ class BPDU:
         }
         return json.dumps(msg)
 
-# pads the name with null bytes at the end
-def pad(name):
-        result = '\0' + name
-        while len(result) < 108:
-                result += '\0'
-        return result
+class Bridge:
+    ports = []
+    neighbors = []
+    last_received = {}
+    last_sent = None
+    def __init__(self, bridge_id, LANs):
+        self.bridge_id = bridge_id
+        self.root_id = bridge_id
+        self.cost_to_root = 0
+        self.ports = range(len(LANs))
+        self.sockets = []
+        # creates sockets and connects to them
+        for lan in LANs:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            padded_lan = '\0' + lan
+            while len(padded_lan) < 108:
+                padded_lan += '\0'
+            s.connect(padded_lan)
+            self.sockets.append(s)
+        print "Bridge " + id + " starting up\n"
 
-            #print(message)
+    def broadcast(self):
+        for sock in self.sockets:
+            bpdu = BPDU(self.bridge_id, self.root_id, self.cost_to_root)
+            sock.send(str(bpdu))
+
+    def receive(self, port, bpdu):
+        # TODO do we need port? Tracking which neighbor to which port?
+        data = json.loads(bpdu)
+        last_received[data.get("source")] = time.time()
+
 
 if __name__ == "__main__":
         id = sys.argv[1]
