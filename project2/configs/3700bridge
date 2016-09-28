@@ -79,10 +79,12 @@ class Bridge:
         root_val = int(self.root_id,16)
 
         # check if it contains better route path
-        if (b_root_val < root_val and
-            (b_cost + 1 <= self.cost_to_root or
-             b_cost == self.cost_to_root == 0)):
-
+        # if (b_root_val < root_val and
+        #     (b_cost + 1 <= self.cost_to_root or
+        #      b_cost == self.cost_to_root == 0)):
+        if (b_root_val >= root_val) and (b_cost + 1 > self.cost_to_root) and (b_bridge_val > int(self.bridge_id, 16)):
+            pass
+        else:
             print("Updating root to {}/{}".format(b_root_id, b_cost+1))
             self.root_id = b_root_id
             self.cost_to_root = b_cost + 1
@@ -96,7 +98,8 @@ class Bridge:
 
         #TODO this might still be wrong...
         # Disable the port connecting these bridges if they already share the same cost and root
-        elif (b_root_val == root_val and b_cost == self.cost_to_root):# and b_bridge_val < root_val):
+        # elif (b_root_val == root_val and b_cost == self.cost_to_root):# and b_bridge_val < root_val):
+        if (b_root_val == root_val and b_cost <= self.cost_to_root and int(self.bridge_id, 16) > b_bridge_val):
             print('Disabling port {}'.format(port))
             self.enabled[port] = False
 
