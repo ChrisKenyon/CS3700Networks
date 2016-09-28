@@ -1,93 +1,151 @@
-#!/usr/bin/perl
+#!/usr/bin/python -u
+# The -u makes output unbuffered, so it will show up immediately
+import json
+import select
+import socket
+import sys
+import time
+import numpy as np
+import threading
+
+# BPDU format:
 #
-# CS3700, Northeastern University
-# Project 1
-#
-# This code provides a sample of how one might structure a bridge program.  This example code
-# simply connects to the specified LANs and broadcasts "Hello!" messages once every 500ms. 
-# It also prints out any messages that it receives on the LANs.  It does *not* actually read or 
-# process any of these messages, maintain any forwarding tables, create BPDUs, etc.
-#
-# You **should not** try to use this as a basis for your code unless you are very comfortable
-# with perl.  Instead, use this as a guide for setting up your basic code in your language of
-# choice.
+# {"source": <bridge ID>, "dest": <ID or 'ffff'>, "type": <bpdu or data>, "message": <message data>}
+# {"source":"02a1", "dest":"ffff", "type": "bpdu", "message":{"id":"02a1", "root":"02a1", "cost":0}}
 
-use strict;
-use warnings;
-use IO::Select;
-use IO::Socket;
-use IO::Socket::UNIX;
-use JSON::PP;
-use Time::HiRes qw(time sleep);
+# Bridge class for forwarding packets, broadcasting bpdus, and closing ports to build a spanning tree
+class Bridge:
 
-$| = 1;
+    def __init__(self, bridge_id, LANs):
+        # only needs to be in the initialization of the bridge
+        # creates sockets and connects to them
+        def build_socket(lan):
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            padded_lan = '\0' + lan
+            while len(padded_lan) < 108:
+                padded_lan += '\0'
+            s.connect(padded_lan)
+            return s
 
-# Read in arguments
-if ($#ARGV < 1) { 
-  die "Usage: ./3700bridge id lan-name [lan-name ...]";
-}
+        # TODO start using this
+        self.last_received = {}
 
-# Get my ID
-my $id = $ARGV[0];
+        self.forward_table = {}
+        self.bridge_id = bridge_id
+        self.root_id = bridge_id
+        self.cost_to_root = 0
+        self.lans = {sock.fileno():sock for sock in map(build_socket,LANs)}
+        self.enabled = {port : True for port in self.lans}
+        print("Bridge " + id + " starting up\n")
 
-my $SLEEP_TIMEOUT = 0.5;
+    def broadcast(self, msg, port_to_exclude=None):
+        for port, sock in self.lans.iteritems():
+            if self.enabled[port] and port is not port_to_exclude:
+                sock.send(msg)
 
-# Build my IO Selector
-my $sel = IO::Select->new();
+    def broadcast_task(self):
+        while True:
+            bpdu = Bridge.BPDU(self.bridge_id, self.root_id, self.cost_to_root)
+            print("Broadcasting: {}/{}".format(self.root_id, self.cost_to_root))
+            self.broadcast(str(bpdu))
+            # TODO it will be better to use something like a timer class with the expiration stuff
+            time.sleep(0.5)
 
-# Data structure storing port -> Socket
-my @ports = ();
-my %portlookup = ();
+    # determine whether a message needs to be forwarded or ignored
+    def handle_data(self, port, data):
+        source = data.get('source')
+        dest = data.get('dest')
+        self.forward_table[source] = port
+        if dest not in self.forward_table:
+            print("Broadcasting message to all but {}".format(port))
+            self.broadcast(json.dumps(data), port)
+        else:
+            dest_port = self.forward_table[dest]
+            if dest_port is not port:
+                print("Forwarding message to {}".format(dest_port))
+                self.lans[dest_port].send(json.dumps(data))
+            # else ignore it
 
-# Connect ports to LANs
-for (my $i=1; $i<=$#ARGV; $i++) {
-  # You **must** pad the path with NULLs to get the right socket
-  my $SOCK_PATH = "\0$ARGV[$i]"  . ("\0" x 256);
+    # manage the bpdu message to build this bridges place in the spanning tree
+    def handle_bpdu(self, port, data):
+        if data['source'] == self.bridge_id:
+            print('Why am I self looping??')
+            return
+        self.last_received[data.get("source")] = time.time()
+        b_root_id = data['message']['root']
+        b_root_val = int(b_root_id,16)
+        b_bridge_val = int(data['message']['id'],16)
+        b_cost = int(data['message']['cost'])
+        root_val = int(self.root_id,16)
 
-  my $client = IO::Socket::UNIX->new(
-     Type => SOCK_SEQPACKET,
-     Peer => $SOCK_PATH
-  );
+        # check if it contains better route path
+        if (b_root_val < root_val and
+            (b_cost + 1 <= self.cost_to_root or
+             b_cost == self.cost_to_root == 0)):
 
-  die "Can't create socket for lan '$ARGV[$i]': $!" unless $client;
-  $client->autoflush(1);
+            print("Updating root to {}/{}".format(b_root_id, b_cost+1))
+            self.root_id = b_root_id
+            self.cost_to_root = b_cost + 1
+            # Flush routing table?
+            self.forward_table = {}
 
-  $sel->add($client);
+            #TODO reenable all when updating? I think this makes sense given a port
+            # could be cut in an intermediary step of building the spanning tree
+            #for p in self.enabled:
+            #    self.enabled[p] = True
 
-  push @ports, $client;
-  $portlookup{$client->fileno} = $i-1;
-}
+        #TODO this might still be wrong...
+        # Disable the port connecting these bridges if they already share the same cost and root
+        elif (b_root_val == root_val and b_cost == self.cost_to_root):# and b_bridge_val < root_val):
+            print('Disabling port {}'.format(port))
+            self.enabled[port] = False
 
-print "Bridge $id starting up\n";
+    # receive messages and then delegate as data or bpdu
+    def receive(self):
+        # Calls select with all the sockets; change the timeout value (1)
+        ready, ignore, ignore2 = select.select(self.lans.values(), [], [], 1)
+        # Reads from each fo the ready sockets
+        for sock in ready:
+            data = sock.recv(1500)
+            data = json.loads(data)
+            print(data)
+            if data.get("type") == "data":
+                self.handle_data(sock.fileno(), data)
+            else:
+                self.handle_bpdu(sock.fileno(), data)
 
-my $last_sent = time;
+    # start the broadcast thread and the receiving loop
+    def start(self):
+        try:
+            threading.Thread(target=self.broadcast_task).start()
+            while True:
+                self.receive()
+        except:
+            print(sys.exc_info())
 
-while (1) {
-  # Determine how long I can sleep for before the next "Hello" broadcast
-  my $sleep = $SLEEP_TIMEOUT - (time - $last_sent);
+    # A BPDU class to keep the information about this bridge message
+    class BPDU:
+        def __init__(self, bridge_id, root_id, cost_to_root, dest='ffff'):
+            self.bridge_id = bridge_id
+            self.dest = dest
+            self.root_id = root_id
+            self.cost_to_root = cost_to_root
+        def __str__(self):
+            msg = {
+                "source": self.bridge_id,
+                "dest": self.dest,
+                "type": "bpdu",
+                "message": {
+                    "id": self.bridge_id,
+                    "root": self.root_id,
+                    "cost": self.cost_to_root
+                }
+            }
+            return json.dumps(msg)
 
-  # Go to sleep, but wake when any port is readable
-  my @ready = $sel->can_read($sleep);
-
-  # When I awake, read any ports that have data
-  foreach my $fh (@ready) {
-    my $msg = "";
-    $fh->recv($msg, 1500);
-    if ($msg) {
-      # Print out that I received a message
-      print "Recv on port " . $portlookup{$fh->fileno} . ": $msg\n";
-    } else {
-      # Disconnect the port if an error occured
-      $sel->remove($fh);
-    }
-  }
-
-  # If it's time to broadcast, send the message
-  if (time - $last_sent > $SLEEP_TIMEOUT) {
-    for (my $i=0; $i<=$#ports; $i++) {
-      my $sock = $ports[$i];
-      print $sock encode_json({"source" => $id, "dest" => "ffff", "type" => "data", "message" => {"data" => "Hello!"}});
-    }
-    $last_sent = time;
-  }
-}
+if __name__ == "__main__":
+    id = sys.argv[1]
+    LAN = sys.argv[2:]
+    # TODO check if this is correct that we want only distinct lan values
+    bridge = Bridge(id, np.unique(LAN))
+    bridge.start()
