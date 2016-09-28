@@ -5,6 +5,7 @@ import select
 import socket
 import sys
 import time
+import numpy as np
 import threading
 
 # BPDU format:
@@ -12,7 +13,7 @@ import threading
 # {"source": <bridge ID>, "dest": <ID or 'ffff'>, "type": <bpdu or data>, "message": <message data>}
 # {"source":"02a1", "dest":"ffff", "type": "bpdu", "message":{"id":"02a1", "root":"02a1", "cost":0}}
 
-
+# Bridge class for forwarding packets, broadcasting bpdus, and closing ports to build a spanning tree
 class Bridge:
 
     def __init__(self, bridge_id, LANs):
@@ -26,19 +27,20 @@ class Bridge:
             s.connect(padded_lan)
             return s
 
+        # TODO start using this
         self.last_received = {}
+
+        self.forward_table = {}
         self.bridge_id = bridge_id
         self.root_id = bridge_id
         self.cost_to_root = 0
-        # I think the socket file descriptor can be used as the port
         self.lans = {sock.fileno():sock for sock in map(build_socket,LANs)}
         self.enabled = {port : True for port in self.lans}
-        self.forwarding = {}
         print("Bridge " + id + " starting up\n")
 
     def broadcast(self, msg, port_to_exclude=None):
         for port, sock in self.lans.iteritems():
-            if self.enabled[port] or port == port_to_exclude:
+            if self.enabled[port] and port is not port_to_exclude:
                 sock.send(msg)
 
     def broadcast_task(self):
@@ -46,23 +48,28 @@ class Bridge:
             bpdu = Bridge.BPDU(self.bridge_id, self.root_id, self.cost_to_root)
             print("Broadcasting: {}/{}".format(self.root_id, self.cost_to_root))
             self.broadcast(str(bpdu))
-            # TODO use better time system like a timer class
-            time.sleep(1)
+            # TODO it will be better to use something like a timer class with the expiration stuff
+            time.sleep(0.5)
 
+    # determine whether a message needs to be forwarded or ignored
     def handle_data(self, port, data):
-        # TODO drop packets for now
-        # source = data['message']['source']  cast
-        # dest = data['message']['dest']
-        # self.forwarding[source] = port
-        # if dest not in self.forwarding:
-        #     self.broadcast(data, port)
-        # else:
-        #     send port at self.forwarding[dest]
-        pass
+        source = data.get('source')
+        dest = data.get('dest')
+        self.forward_table[source] = port
+        if dest not in self.forward_table:
+            print("Broadcasting message to all but {}".format(port))
+            self.broadcast(json.dumps(data), port)
+        else:
+            dest_port = self.forward_table[dest]
+            if dest_port is not port:
+                print("Forwarding message to {}".format(dest_port))
+                self.lans[dest_port].send(json.dumps(data))
+            # else ignore it
 
+    # manage the bpdu message to build this bridges place in the spanning tree
     def handle_bpdu(self, port, data):
         if data['source'] == self.bridge_id:
-            print('Uhh fix this?')
+            print('Why am I self looping??')
             return
         self.last_received[data.get("source")] = time.time()
         b_root_id = data['message']['root']
@@ -76,16 +83,24 @@ class Bridge:
             (b_cost + 1 <= self.cost_to_root or
              b_cost == self.cost_to_root == 0)):
 
-            print("Updating to {}/{}".format(b_root_id, b_cost+1))
+            print("Updating root to {}/{}".format(b_root_id, b_cost+1))
             self.root_id = b_root_id
             self.cost_to_root = b_cost + 1
-            #TODO reenable all?
-        # disable port
-        #TODO this is wrong I think. It's not removing cycles
-        elif (b_root_val == root_val and b_cost == self.cost_to_root and b_bridge_val < root_val):
-            print('Disabling port {}'.format(port))
-            self.enable[port] = False
+            # Flush routing table?
+            self.forward_table = {}
 
+            #TODO reenable all when updating? I think this makes sense given a port
+            # could be cut in an intermediary step of building the spanning tree
+            #for p in self.enabled:
+            #    self.enabled[p] = True
+
+        #TODO this might still be wrong...
+        # Disable the port connecting these bridges if they already share the same cost and root
+        elif (b_root_val == root_val and b_cost == self.cost_to_root):# and b_bridge_val < root_val):
+            print('Disabling port {}'.format(port))
+            self.enabled[port] = False
+
+    # receive messages and then delegate as data or bpdu
     def receive(self):
         # Calls select with all the sockets; change the timeout value (1)
         ready, ignore, ignore2 = select.select(self.lans.values(), [], [], 1)
@@ -93,12 +108,13 @@ class Bridge:
         for sock in ready:
             data = sock.recv(1500)
             data = json.loads(data)
-            if data["type"] == "data":
+            print(data)
+            if data.get("type") == "data":
                 self.handle_data(sock.fileno(), data)
             else:
-                print(data)
                 self.handle_bpdu(sock.fileno(), data)
 
+    # start the broadcast thread and the receiving loop
     def start(self):
         try:
             threading.Thread(target=self.broadcast_task).start()
@@ -130,5 +146,6 @@ class Bridge:
 if __name__ == "__main__":
     id = sys.argv[1]
     LAN = sys.argv[2:]
-    bridge = Bridge(id, LAN)
+    # TODO check if this is correct that we want only distinct lan values
+    bridge = Bridge(id, np.unique(LAN))
     bridge.start()
