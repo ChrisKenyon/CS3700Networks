@@ -67,12 +67,9 @@ class Bridge:
             # else ignore it
 
     def update_root(self, data):
-        b_root_val = int(data['message']['root'],16)
-        b_cost = int(data['message']['cost'])
-
-        print("Updating root to {}/{}".format(data['message']['root'], b_cost + 1))
-        self.root_id = b_root_val
-        self.cost_to_root = b_cost + 1
+        print("Updating root to {}/{}".format(data['message']['root'], int(data['message']['cost']) + 1))
+        self.root_id = data['message']['root']
+        self.cost_to_root = int(data['message']['cost']) + 1
         # Clear forwarding table?
         self.forward_table = {}
 
@@ -82,10 +79,10 @@ class Bridge:
             print('Why am I self looping??')
             return
         self.last_received[data.get("source")] = time.time()
-        b_root_val = data['message']['root'] if type(data['message']['root']) == int else int(data['message']['root'],16)
+        b_root_val = int(data['message']['root'],16)
         b_bridge_val = int(data['message']['id'],16)
         b_cost = int(data['message']['cost'])
-        root_val = self.root_id if type(self.root_id) == int else int(self.root_id,16)
+        root_val = int(self.root_id,16)
 
         # check if it contains better route path
         # if (b_root_val < root_val and
@@ -107,7 +104,7 @@ class Bridge:
         #TODO this might still be wrong...
         # Disable the port connecting these bridges if they already share the same cost and root
         # elif (b_root_val == root_val and b_cost == self.cost_to_root):# and b_bridge_val < root_val):
-        if (b_root_val == root_val and b_cost + 1 <= self.cost_to_root) and (int(self.bridge_id, 16) > b_bridge_val):
+        if (b_root_val == root_val) and (b_cost + 1 <= self.cost_to_root) and (int(self.bridge_id, 16) > b_bridge_val):
             print('Disabling port {}'.format(port))
             self.enabled[port] = False
 
