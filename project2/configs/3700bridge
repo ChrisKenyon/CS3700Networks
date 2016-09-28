@@ -82,10 +82,10 @@ class Bridge:
             print('Why am I self looping??')
             return
         self.last_received[data.get("source")] = time.time()
-        b_root_val = int(data['message']['root'],16)
+        b_root_val = data['message']['root'] if type(data['message']['root']) == int else int(data['message']['root'],16)
         b_bridge_val = int(data['message']['id'],16)
         b_cost = int(data['message']['cost'])
-        root_val = int(self.root_id,16)
+        root_val = self.root_id if type(self.root_id) == int else int(self.root_id,16)
 
         # check if it contains better route path
         # if (b_root_val < root_val and
