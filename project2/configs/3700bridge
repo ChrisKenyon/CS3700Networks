@@ -107,7 +107,7 @@ class Bridge:
         #TODO this might still be wrong...
         # Disable the port connecting these bridges if they already share the same cost and root
         # elif (b_root_val == root_val and b_cost == self.cost_to_root):# and b_bridge_val < root_val):
-        if (b_root_val == root_val and b_cost <= self.cost_to_root and int(self.bridge_id, 16) > b_bridge_val):
+        if (b_root_val == root_val and b_cost + 1 <= self.cost_to_root) and (int(self.bridge_id, 16) > b_bridge_val):
             print('Disabling port {}'.format(port))
             self.enabled[port] = False
 
