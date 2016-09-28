@@ -67,13 +67,12 @@ class Bridge:
             # else ignore it
 
     def update_root(self, data):
-        data_root = int(data['message']['root'], 16)
-        data_bridge = int(data['message']['id'], 16)
-        data_cost = int(data['message']['cost'])
+        b_root_val = int(data['message']['root'],16)
+        b_cost = int(data['message']['cost'])
 
-        print("Updating root to {}/{}".format(data_root, data_cost + 1))
-        self.root_id = data_root
-        self.cost_to_root = data_cost + 1
+        print("Updating root to {}/{}".format(data['message']['root'], b_cost + 1))
+        self.root_id = b_root_val
+        self.cost_to_root = b_cost + 1
         # Clear forwarding table?
         self.forward_table = {}
 
@@ -83,8 +82,7 @@ class Bridge:
             print('Why am I self looping??')
             return
         self.last_received[data.get("source")] = time.time()
-        b_root_id = data['message']['root']
-        b_root_val = int(b_root_id,16)
+        b_root_val = int(data['message']['root'],16)
         b_bridge_val = int(data['message']['id'],16)
         b_cost = int(data['message']['cost'])
         root_val = int(self.root_id,16)
