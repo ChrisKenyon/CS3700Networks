@@ -66,6 +66,17 @@ class Bridge:
                 self.lans[dest_port].send(json.dumps(data))
             # else ignore it
 
+    def update_root(self, data):
+        data_root = int(data['message']['root'], 16)
+        data_bridge = int(data['message']['id'], 16)
+        data_cost = int(data['message']['cost'])
+
+        print("Updating root to {}/{}".format(data_root, data_cost + 1))
+        self.root_id = data_root
+        self.cost_to_root = data_cost + 1
+        # Clear forwarding table?
+        self.forward_table = {}
+
     # manage the bpdu message to build this bridges place in the spanning tree
     def handle_bpdu(self, port, data):
         if data['source'] == self.bridge_id:
@@ -82,15 +93,14 @@ class Bridge:
         # if (b_root_val < root_val and
         #     (b_cost + 1 <= self.cost_to_root or
         #      b_cost == self.cost_to_root == 0)):
-        if (b_root_val >= root_val) and (b_cost + 1 > self.cost_to_root) and (b_bridge_val > int(self.bridge_id, 16)):
-            pass
+        if b_root_val < root_val:
+            self.update_root(data)
+        elif b_root_val == root_val and (b_cost + 1 < self.cost_to_root):
+            self.update_root(data)
+        elif b_root_val == root_val and (b_cost + 1 == self.cost_to_root) and (b_bridge_val < int(self.bridge_id, 16)):
+            self.update_root(data)
         else:
-            print("Updating root to {}/{}".format(b_root_id, b_cost+1))
-            self.root_id = b_root_id
-            self.cost_to_root = b_cost + 1
-            # Flush routing table?
-            self.forward_table = {}
-
+            pass
             #TODO reenable all when updating? I think this makes sense given a port
             # could be cut in an intermediary step of building the spanning tree
             #for p in self.enabled:
