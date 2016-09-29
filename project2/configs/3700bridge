@@ -53,6 +53,8 @@ class Bridge:
 
     # determine whether a message needs to be forwarded or ignored
     def handle_data(self, port, data):
+        if not self.enabled[port]:
+            return
         source = data.get('source')
         dest = data.get('dest')
         self.forward_table[source] = port
@@ -72,41 +74,28 @@ class Bridge:
         self.cost_to_root = int(data['message']['cost']) + 1
         # Clear forwarding table?
         self.forward_table = {}
+        for p in self.enabled:
+            self.enabled[p] = True
 
     # manage the bpdu message to build this bridges place in the spanning tree
     def handle_bpdu(self, port, data):
-        if data['source'] == self.bridge_id:
-            print('Why am I self looping??')
-            return
         self.last_received[data.get("source")] = time.time()
         b_root_val = int(data['message']['root'],16)
         b_bridge_val = int(data['message']['id'],16)
         b_cost = int(data['message']['cost'])
         root_val = int(self.root_id,16)
 
-        # check if it contains better route path
-        # if (b_root_val < root_val and
-        #     (b_cost + 1 <= self.cost_to_root or
-        #      b_cost == self.cost_to_root == 0)):
-        if b_root_val < root_val:
-            self.update_root(data)
-        elif b_root_val == root_val and (b_cost + 1 < self.cost_to_root):
-            self.update_root(data)
-        elif b_root_val == root_val and (b_cost + 1 == self.cost_to_root) and (b_bridge_val < int(self.bridge_id, 16)):
-            self.update_root(data)
-        else:
+        if (b_root_val >= root_val) and (b_cost + 1 > self.cost_to_root) and (b_bridge_val > int(self.bridge_id, 16)):
             pass
-            #TODO reenable all when updating? I think this makes sense given a port
-            # could be cut in an intermediary step of building the spanning tree
-            #for p in self.enabled:
-            #    self.enabled[p] = True
+        else:
+            self.update_root(data)
 
-        #TODO this might still be wrong...
         # Disable the port connecting these bridges if they already share the same cost and root
         # elif (b_root_val == root_val and b_cost == self.cost_to_root):# and b_bridge_val < root_val):
-        if (b_root_val == root_val) and (b_cost + 1 <= self.cost_to_root) and (b_bridge_val <= int(self.bridge_id, 16)):
-            print('Disabling port {}'.format(port))
-            self.enabled[port] = False
+        if self.enabled[port]:
+            if (b_root_val == root_val and b_cost +1 <= self.cost_to_root and int(self.bridge_id, 16) > b_bridge_val):
+                print('Disabling port {}'.format(port))
+                self.enabled[port] = False
 
     # receive messages and then delegate as data or bpdu
     def receive(self):
