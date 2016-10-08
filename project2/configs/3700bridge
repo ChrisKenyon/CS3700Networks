@@ -15,22 +15,22 @@ BPDU_BC_TIME = 0.5
 # a timer that can fire a one-off callback (for bpdu timeouts that will most often be cancelled)
 # or can fire the callback repeatedly at the specified time interval (bpdu updates)
 class RepeatableTimer(object):
-    def __init__(self, intv, f,port, repeat):
+    def __init__(self, intv, f,port=None, repeat=True):
         self.interval = intv
         self.func = f
         self.port = port
         self.repeat = repeat
         self.timer=None
-    def callback(self,port):
-        if port:
-            self.func(port)
+    def callback(self):
+        if self.port:
+            self.func(self.port)
         else: self.func()
         if self.repeat:
             self.start()
     def cancel(self):
         self.timer.cancel()
     def start(self):
-        self.timer = Timer(self.interval, self.callback, self.port)
+        self.timer = Timer(self.interval, self.callback)
         self.timer.start()
     def restart(self):
         self.cancel()
@@ -66,37 +66,34 @@ class Bridge:
         self.bt_lock = Lock()
 
         self.enabled = {port : True for port in self.lans}
-        self.msgs_sent = []
+        self.designated = [port for port in self.lans]
         print("Bridge " + id + " starting up\n")
 
     # broadcast a data message to all enabled ports
     def broadcast(self, msg, port_to_exclude=None):
         for port, sock in self.lans.iteritems():
-            if self.enabled[port] and port is not port_to_exclude:
+            #if self.enabled[port] and port is not port_to_exclude:
+            if port in self.designated and port is not port_to_exclude:
                 sock.sendall(msg)
 
     # construct and broadcast a bpdu
     def broadcast_bpdu(self):
-        print("Broadcasting: {}/{}. disableds = {}".format(self.root_id, self.cost_to_root,str(self.enabled)))
-        self.broadcast_bpdu()
-        bpdu = Bridge.BPDU(self.bridge_id, self.root_id, self.cost_to_root)
-        for port, sock in self.lans.iteritems():
-            sock.sendall(str(bpdu))
+        try:
+            print("Broadcasting: {}/{}. disableds = {}".format(self.root_id, self.cost_to_root,str(self.enabled)))
+            for port, sock in self.lans.iteritems():
+                is_root = self.root_port == port
+                is_desig = port in self.designated
+                bpdu = Bridge.BPDU(self.bridge_id, self.root_id, self.cost_to_root, is_root, is_desig)
+                sock.sendall(str(bpdu))
+        except:
+            print(sys.exc_info())
 
     # determine whether a message needs to be forwarded or ignored
     def handle_data(self, port, data):
-        # OK so this message thing seems super hacky but it's making all the difference
-        msg_id = data['message']['id']
-        if msg_id in self.msgs_sent:
-            return
-        else:
-            self.msgs_sent.append(msg_id)
-
         source = data.get('source')
         dest = data.get('dest')
         with self.ft_lock:
             self.forward_table[source] = (port, time.time())
-
             if dest in self.forward_table:
                 dest_port, last_time = self.forward_table[dest]
                 if time.time() - last_time < TIMEOUT:
@@ -107,7 +104,7 @@ class Bridge:
                         print("Not forwarding message id: {}".format(data['message']['id']))
                     return
                 else:
-                    self.foward_table.pop(dest_port)
+                    self.forward_table.pop(dest_port)
         print("Broadcasting message to all but {}".format(port))
         self.broadcast(json.dumps(data), port)
 
@@ -124,6 +121,7 @@ class Bridge:
             for p in self.enabled:
                 self.enabled[p] = True
             self.broadcast_bpdu()
+            self.designated = []
             self.timer.restart()
 
     # timeout task on receiving a bpdu from a port
@@ -156,11 +154,47 @@ class Bridge:
         b_cost = int(data['message']['cost'])
         root_val = int(self.root_id,16)
 
-        if b_root_val < root_val or b_root_val == root_val and b_cost + 1 < self.cost_to_root:
+        if (b_root_val >= root_val) and (b_cost + 1 > self.cost_to_root) and (b_bridge_val > int(self.bridge_id, 16)):
+            pass
+        elif b_root_val < root_val:
             self.update_root(data, port)
+        elif b_root_val == root_val and (b_cost + 1 < self.cost_to_root):
+            self.update_root(data, port)
+        elif b_root_val == root_val and (b_cost + 1 == self.cost_to_root) and (b_bridge_val < int(self.bridge_id, 16)):
+            self.update_root(data, port)
+
+
+        '''
+        TODO fix this logic. The idea is that a DP is a port where it is the path to a
+        lower part of the tree
+        '''
+        if bool(data['message']['root_port']) and b_cost > self.cost_to_root:
+            if port not in self.designated:
+                self.designated.append(port)
+        elif self.enabled[port] and b_cost <= self.cost_to_root and (port != self.root_port or not bool(data['message']['desig_port'])):
+            if port not in self.designated:
+                print('Disabling port {}'.format(port))
+                self.enabled[port]=False
+
+
+        '''
+        # check designated and root
+        for port in self.lans:
+            if self.root_id == self.bridge_id:
+                self.enabled[port] = True
+                if port not in self.designated:
+                    self.designated.append(port)
+            elif port in self.designated or port == self.root_port:
+                self.enabled[port] = True
+            else:
+                print('Disabling port {}'.format(port))
+                self.enabled[port] = False
+        '''
+        '''
         elif b_root_val == root_val and b_cost == self.cost_to_root and int(self.bridge_id, 16) > b_bridge_val:
             print('Disabling port {}'.format(port))
             self.enabled[port] = False
+        '''
 
     # receive messages and then delegate as data or bpdu
     def receive(self):
@@ -170,7 +204,7 @@ class Bridge:
         for sock in ready:
             data = sock.recv(1500)
             data = json.loads(data)
-            #print(data)
+            print(data)
             if data.get("type") == "data":
                 if not self.enabled[sock.fileno()]:
                     continue
@@ -182,7 +216,7 @@ class Bridge:
     def start(self):
         try:
             # timer for updating bpdu broadcasts
-            self.timer = RepeatableTimer(BPDU_BC_TIME,self.broadcast,None,True)
+            self.timer = RepeatableTimer(BPDU_BC_TIME,self.broadcast_bpdu,None,True)
             self.timer.start()
             while True:
                 self.receive()
@@ -191,11 +225,13 @@ class Bridge:
 
     # A BPDU class to keep the information about this bridge message
     class BPDU:
-        def __init__(self, bridge_id, root_id, cost_to_root, dest='ffff'):
+        def __init__(self, bridge_id, root_id, cost_to_root, root_port = False, desig_port = False, dest='ffff'):
             self.bridge_id = bridge_id
             self.dest = dest
             self.root_id = root_id
             self.cost_to_root = cost_to_root
+            self.root_port = root_port
+            self.desig_port = desig_port
         def __str__(self):
             msg = {
                 "source": self.bridge_id,
@@ -204,7 +240,9 @@ class Bridge:
                 "message": {
                     "id": self.bridge_id,
                     "root": self.root_id,
-                    "cost": self.cost_to_root
+                    "cost": self.cost_to_root,
+                    "root_port": str(self.root_port),
+                    "desig_port": str(self.desig_port)
                 }
             }
             return json.dumps(msg)
