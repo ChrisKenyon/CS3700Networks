@@ -53,6 +53,7 @@ class Bridge:
         self.bridge_id = bridge_id
         self.root_id = bridge_id
         self.root_port = 0
+        self.root_port_bridge = bridge_id
         self.cost_to_root = 0
         self.lans = {sock.fileno():sock for sock in map(build_socket,LANs)}
 
@@ -66,6 +67,7 @@ class Bridge:
         self.bt_lock = Lock()
 
         self.enabled = {port : True for port in self.lans}
+        self.disHop = []
         self.designated = [port for port in self.lans]
         print("Bridge " + id + " starting up\n")
 
@@ -73,7 +75,7 @@ class Bridge:
     def broadcast(self, msg, port_to_exclude=None):
         for port, sock in self.lans.iteritems():
             #if self.enabled[port] and port is not port_to_exclude:
-            if port in self.designated and port is not port_to_exclude:
+            if self.enabled[port] and port is not port_to_exclude:
                 sock.sendall(msg)
 
     # construct and broadcast a bpdu
@@ -81,9 +83,7 @@ class Bridge:
         try:
             print("Broadcasting: {}/{}. disableds = {}".format(self.root_id, self.cost_to_root,str(self.enabled)))
             for port, sock in self.lans.iteritems():
-                is_root = self.root_port == port
-                is_desig = port in self.designated
-                bpdu = Bridge.BPDU(self.bridge_id, self.root_id, self.cost_to_root, is_root, is_desig)
+                bpdu = Bridge.BPDU(self.bridge_id, self.root_id, self.cost_to_root, port, self.root_port_bridge, desig_port = port in self.designated)
                 sock.sendall(str(bpdu))
         except:
             print(sys.exc_info())
@@ -104,8 +104,8 @@ class Bridge:
                         print("Not forwarding message id: {}".format(data['message']['id']))
                     return
                 else:
-                    self.forward_table.pop(dest_port)
-        print("Broadcasting message to all but {}".format(port))
+                    self.forward_table.pop(dest)
+        print("Broadcasting message {} to all but {}".format(data['message']['id'],port))
         self.broadcast(json.dumps(data), port)
 
     # update the root as part of building the STP
@@ -115,6 +115,7 @@ class Bridge:
             self.root_id = data['message']['root']
             self.cost_to_root = int(data['message']['cost']) + 1
             self.root_port = port
+            self.root_port_bridge = data['source']
             # Clear forwarding table?
             with self.ft_lock:
                 self.forward_table = {}
@@ -154,52 +155,49 @@ class Bridge:
         b_cost = int(data['message']['cost'])
         root_val = int(self.root_id,16)
 
-        if (b_root_val >= root_val) and (b_cost + 1 > self.cost_to_root) and (b_bridge_val > int(self.bridge_id, 16)):
-            pass
-        elif b_root_val < root_val:
-            self.update_root(data, port)
-        elif b_root_val == root_val and (b_cost + 1 < self.cost_to_root):
-            self.update_root(data, port)
-        elif b_root_val == root_val and (b_cost + 1 == self.cost_to_root) and (b_bridge_val < int(self.bridge_id, 16)):
-            self.update_root(data, port)
-
-
-        '''
-        TODO fix this logic. The idea is that a DP is a port where it is the path to a
-        lower part of the tree
-        '''
-        if bool(data['message']['root_port']) and b_cost > self.cost_to_root:
-            if port not in self.designated:
-                self.designated.append(port)
-        elif self.enabled[port] and b_cost <= self.cost_to_root and (port != self.root_port or not bool(data['message']['desig_port'])):
-            if port not in self.designated:
-                print('Disabling port {}'.format(port))
-                self.enabled[port]=False
-
-
-        '''
-        # check designated and root
-        for port in self.lans:
-            if self.root_id == self.bridge_id:
-                self.enabled[port] = True
-                if port not in self.designated:
-                    self.designated.append(port)
-            elif port in self.designated or port == self.root_port:
-                self.enabled[port] = True
+        # disable this self loop
+        if source == self.bridge_id:
+            self.enabled[int(data.get('source_port'))] = False
+        else:
+            if (b_root_val < root_val):
+                self.update_root(data, port)
+            elif root_val < b_root_val:
+                pass
             else:
-                print('Disabling port {}'.format(port))
-                self.enabled[port] = False
-        '''
-        '''
-        elif b_root_val == root_val and b_cost == self.cost_to_root and int(self.bridge_id, 16) > b_bridge_val:
-            print('Disabling port {}'.format(port))
-            self.enabled[port] = False
-        '''
+                if self.cost_to_root > b_cost + 1:
+                    self.upate_root(data,port)
+                elif self.cost_to_root < b_cost:
+                    if data['root_port_bridge'] == self.bridge_id and port not in self.designated:
+                        self.designated.append(port)
+                elif self.cost_to_root == b_cost + 1:
+                    if int(self.root_port_bridge,16) > int(source,16):
+                        self.update_root(data,port)
+                    elif port != self.root_port:
+                        print('Disabling port {}'.format(port))
+                        self.enabled[port]=False
+                        with self.ft_lock:
+                            self.forward_table = {}
+                        if self.root_port_bridge == source:
+                            if port not in self.disHop:
+                                self.disHop.append(port)
+                else:
+                    if port == self.root_port:
+                        pass
+                    elif self.root_port_bridge == data['root_port_bridge']:
+                        if int(self.bridge_id,16) > int(source,16):
+                            print('Disabling port {}'.format(port))
+                            self.enabled[port]=False
+                        elif port not in self.designated:
+                            self.designated.append(port)
+                    else:
+                        print('Disabling port {}'.format(port))
+                        self.enabled[port]=False
+
 
     # receive messages and then delegate as data or bpdu
     def receive(self):
         # Calls select with all the sockets; change the timeout value (1)
-        ready, ignore, ignore2 = select.select(self.lans.values(), [], [], 1)
+        ready, ignore, ignore2 = select.select(self.lans.values(), [], [], 0.1)
         # Reads from each fo the ready sockets
         for sock in ready:
             data = sock.recv(1500)
@@ -225,23 +223,25 @@ class Bridge:
 
     # A BPDU class to keep the information about this bridge message
     class BPDU:
-        def __init__(self, bridge_id, root_id, cost_to_root, root_port = False, desig_port = False, dest='ffff'):
+        def __init__(self, bridge_id, root_id, cost_to_root, source_port, root_port_bridge, desig_port = False, dest='ffff'):
             self.bridge_id = bridge_id
             self.dest = dest
             self.root_id = root_id
             self.cost_to_root = cost_to_root
-            self.root_port = root_port
+            self.source_port = source_port
+            self.root_port_bridge = root_port_bridge
             self.desig_port = desig_port
         def __str__(self):
             msg = {
                 "source": self.bridge_id,
+                "source_port": self.source_port,
+                "root_port_bridge": self.root_port_bridge,
                 "dest": self.dest,
                 "type": "bpdu",
                 "message": {
                     "id": self.bridge_id,
                     "root": self.root_id,
                     "cost": self.cost_to_root,
-                    "root_port": str(self.root_port),
                     "desig_port": str(self.desig_port)
                 }
             }
