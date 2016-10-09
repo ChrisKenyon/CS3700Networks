@@ -92,6 +92,9 @@ class Bridge:
     def handle_data(self, port, data):
         source = data.get('source')
         dest = data.get('dest')
+        if not self.enabled[port]:
+            print("Not forwarding message id: {}".format(data['message']['id']))
+            return
         with self.ft_lock:
             self.forward_table[source] = (port, time.time())
             if dest in self.forward_table:
@@ -204,8 +207,6 @@ class Bridge:
             data = json.loads(data)
             print(data)
             if data.get("type") == "data":
-                if not self.enabled[sock.fileno()]:
-                    continue
                 self.handle_data(sock.fileno(), data)
             else:
                 self.handle_bpdu(sock.fileno(), data)
@@ -214,6 +215,7 @@ class Bridge:
     def start(self):
         try:
             # timer for updating bpdu broadcasts
+            self.broadcast_bpdu()
             self.timer = RepeatableTimer(BPDU_BC_TIME,self.broadcast_bpdu,None,True)
             self.timer.start()
             while True:
