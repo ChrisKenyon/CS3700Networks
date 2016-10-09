@@ -80,7 +80,6 @@ class Bridge:
     # construct and broadcast a bpdu
     def broadcast_bpdu(self):
         try:
-            print("Broadcasting: {}/{}. disableds = {}".format(self.root_id, self.cost_to_root,str(self.enabled)))
             for port, sock in self.lans.iteritems():
                 bpdu = Bridge.BPDU(self.bridge_id, self.root_id, self.cost_to_root, port, self.root_port_bridge, desig_port = port in self.designated)
                 sock.sendall(str(bpdu))
@@ -239,7 +238,6 @@ class Bridge:
         for sock in ready:
             data = sock.recv(1500)
             data = json.loads(data)
-            print(data)
             if data.get("type") == "data":
                 self.handle_data(sock.fileno(), data)
             else:
