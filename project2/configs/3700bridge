@@ -95,6 +95,8 @@ class Bridge:
         if not self.enabled[port]:
             print("Not forwarding message id: {}".format(data['message']['id']))
             return
+        else:
+            print("Received message {} on port {} from {} to {}".format(data['message']['id'], port, data['source'], data['dest']))
         # be thread safe!
         with self.ft_lock:
             # update the forwarding table with this host
@@ -107,7 +109,7 @@ class Bridge:
                 if time.time() - last_time < TIMEOUT:
                     if dest_port is not port:
                         # and forward it so long as it's not the port we just received on!
-                        print("Forwarding message to {}".format(dest_port))
+                        print("Forwarding message {} to {}".format(data['message']['id'], dest_port))
                         self.lans[dest_port].send(json.dumps(data))
                     else:
                         # and drop it if it is
@@ -125,7 +127,8 @@ class Bridge:
     # flushing the forwarding table, re-enabling all ports, broadcasting a bpdu (and resetting timer), and clearing designated ports
     def update_root(self, data, port):
         if self.root_id != data['message']['root'] or self.cost_to_root != int(data['message']['cost']) + 1:
-            print("Updating root to {}/{}".format(data['message']['root'], int(data['message']['cost']) + 1))
+            print("New root: {}/{}".format(self.bridge_id, data['message']['root']))
+            print("Root port: {}/{}".format(self.bridge_id, port))
             self.root_id = data['message']['root']
             self.cost_to_root = int(data['message']['cost']) + 1
             self.root_port = port
@@ -194,6 +197,7 @@ class Bridge:
                 # if this leads to a lower level of the STP, then it is a designated port
                 elif self.cost_to_root < b_cost:
                     if data['root_port_bridge'] == self.bridge_id and port not in self.designated:
+                        print("Designated port: {}/{}".format(self.bridge_id, port))
                         self.designated.append(port)
                 # if the cost is representative of a neighbor in the tree, it could mean two things
                 elif self.cost_to_root == b_cost + 1:
@@ -202,7 +206,7 @@ class Bridge:
                         self.update_root(data,port)
                     # 2: there is a loop and the port should be disabled
                     elif port != self.root_port:
-                        print('Disabling port {}'.format(port))
+                        print('Disabled port: {}/{}'.format(self.bridge_id, port))
                         self.enabled[port]=False
                         # and we should flush the forwarding table with that too
                         with self.ft_lock:
@@ -215,14 +219,15 @@ class Bridge:
                     elif self.root_port_bridge == data['root_port_bridge']:
                         # then there's a loop to be disabled! It's this one if the bridge id is greater
                         if int(self.bridge_id,16) > int(source,16):
-                            print('Disabling port {}'.format(port))
+                            print('Disabled port: {}/{}'.format(self.bridge_id, port))
                             self.enabled[port]=False
                         # or the port is designated and the other should be disabled if this is greater
                         elif port not in self.designated:
+                            print("Designated port: {}/{}".format(self.bridge_id, port))
                             self.designated.append(port)
                     # and there's also a larger loop if this isn't true so the port should be disabled
                     else:
-                        print('Disabling port {}'.format(port))
+                        print('Disabled port: {}/{}'.format(self.bridge_id, port))
                         self.enabled[port]=False
 
 
@@ -282,6 +287,5 @@ class Bridge:
 if __name__ == "__main__":
     id = sys.argv[1]
     LAN = sys.argv[2:]
-    # TODO check if this is correct that we want only distinct lan values
     bridge = Bridge(id, np.unique(LAN))
     bridge.start()
