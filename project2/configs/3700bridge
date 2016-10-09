@@ -67,7 +67,6 @@ class Bridge:
         self.bt_lock = Lock()
 
         self.enabled = {port : True for port in self.lans}
-        self.disHop = []
         self.designated = [port for port in self.lans]
         print("Bridge " + id + " starting up\n")
 
@@ -92,26 +91,38 @@ class Bridge:
     def handle_data(self, port, data):
         source = data.get('source')
         dest = data.get('dest')
+        # drop this if the port is disabled
         if not self.enabled[port]:
             print("Not forwarding message id: {}".format(data['message']['id']))
             return
+        # be thread safe!
         with self.ft_lock:
+            # update the forwarding table with this host
             self.forward_table[source] = (port, time.time())
+            # if we already have an entry in the table..
             if dest in self.forward_table:
+                # then we can grab that port and last time values
                 dest_port, last_time = self.forward_table[dest]
+                # forwarding table entries should expire as well
                 if time.time() - last_time < TIMEOUT:
                     if dest_port is not port:
+                        # and forward it so long as it's not the port we just received on!
                         print("Forwarding message to {}".format(dest_port))
                         self.lans[dest_port].send(json.dumps(data))
                     else:
+                        # and drop it if it is
                         print("Not forwarding message id: {}".format(data['message']['id']))
                     return
                 else:
+                    # handle timeout
                     self.forward_table.pop(dest)
+        # if there's no entry then broadcast to all but the receive port
         print("Broadcasting message {} to all but {}".format(data['message']['id'],port))
         self.broadcast(json.dumps(data), port)
 
     # update the root as part of building the STP
+    # this entails updating the cost, root port, root bridge, root port bridge,
+    # flushing the forwarding table, re-enabling all ports, broadcasting a bpdu (and resetting timer), and clearing designated ports
     def update_root(self, data, port):
         if self.root_id != data['message']['root'] or self.cost_to_root != int(data['message']['cost']) + 1:
             print("Updating root to {}/{}".format(data['message']['root'], int(data['message']['cost']) + 1))
@@ -133,7 +144,7 @@ class Bridge:
         with self.bt_lock:
             self.enabled[port]=True
             if port == self.root_port:
-                #reset
+                # reset
                 self.root_id = self.bridge_id
                 self.cost_to_root = 0
                 self.root_port = 0
@@ -146,10 +157,15 @@ class Bridge:
     # manage the bpdu message to build this bridges place in the spanning tree
     def handle_bpdu(self, port, data):
         with self.bt_lock:
+            # we want to timeout the bridge messages every NO_BPDU_THRESH seconds
             if port not in self.bridge_timeouts:
+                # but we want this to be a one-off fire, so dont make it repeat (False flag)
+                # the no_bpdu_received call will fire to reset the root back to itself. This is in case
+                # a bridge drops out this bridge will fix itself after ~ NO_BPDU_THRESH - BPDU_BC_TIME seconds
                 self.bridge_timeouts[port] = RepeatableTimer(NO_BPDU_THRESH,self.no_bpdu_received,port,False)
                 self.bridge_timeouts[port].start()
             else:
+                # and we kick the timer everytime we do get an update
                 self.bridge_timeouts[port].restart()
 
         source = data.get("source")
@@ -162,36 +178,49 @@ class Bridge:
         if source == self.bridge_id:
             self.enabled[int(data.get('source_port'))] = False
         else:
+            # if the root from the bpdu is a better root
             if (b_root_val < root_val):
+                # then update it
                 self.update_root(data, port)
+            # otherwise, if they're not equal, then move on
             elif root_val < b_root_val:
                 pass
+            # but if they are equal...
             else:
+                # and this is a better route to the root
                 if self.cost_to_root > b_cost + 1:
+                    # then update the root
                     self.upate_root(data,port)
+                # if this leads to a lower level of the STP, then it is a designated port
                 elif self.cost_to_root < b_cost:
                     if data['root_port_bridge'] == self.bridge_id and port not in self.designated:
                         self.designated.append(port)
+                # if the cost is representative of a neighbor in the tree, it could mean two things
                 elif self.cost_to_root == b_cost + 1:
+                    # 1: there is a better root port
                     if int(self.root_port_bridge,16) > int(source,16):
                         self.update_root(data,port)
+                    # 2: there is a loop and the port should be disabled
                     elif port != self.root_port:
                         print('Disabling port {}'.format(port))
                         self.enabled[port]=False
+                        # and we should flush the forwarding table with that too
                         with self.ft_lock:
                             self.forward_table = {}
-                        if self.root_port_bridge == source:
-                            if port not in self.disHop:
-                                self.disHop.append(port)
+                # and otherwise so long this isn't the root port...
                 else:
                     if port == self.root_port:
                         pass
+                    # if the same bridge leads this bridge and the source bridge to the root
                     elif self.root_port_bridge == data['root_port_bridge']:
+                        # then there's a loop to be disabled! It's this one if the bridge id is greater
                         if int(self.bridge_id,16) > int(source,16):
                             print('Disabling port {}'.format(port))
                             self.enabled[port]=False
+                        # or the port is designated and the other should be disabled if this is greater
                         elif port not in self.designated:
                             self.designated.append(port)
+                    # and there's also a larger loop if this isn't true so the port should be disabled
                     else:
                         print('Disabling port {}'.format(port))
                         self.enabled[port]=False
@@ -201,7 +230,7 @@ class Bridge:
     def receive(self):
         # Calls select with all the sockets; change the timeout value (1)
         ready, ignore, ignore2 = select.select(self.lans.values(), [], [], 0.1)
-        # Reads from each fo the ready sockets
+        # Reads from each of the ready sockets (LANs)
         for sock in ready:
             data = sock.recv(1500)
             data = json.loads(data)
@@ -216,6 +245,7 @@ class Bridge:
         try:
             # timer for updating bpdu broadcasts
             self.broadcast_bpdu()
+            # a repeat timer that will fire at the interbal of BPDU_BC_TIME
             self.timer = RepeatableTimer(BPDU_BC_TIME,self.broadcast_bpdu,None,True)
             self.timer.start()
             while True:
