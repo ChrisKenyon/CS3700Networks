@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from socket import socket, AF_INET, SOCK_DGRAM
-from zlib import decompress
+from zlib import decompress, error
 import datetime
 import json
 import sys
@@ -31,8 +31,11 @@ if __name__=='__main__':
         if result:
             (data, addr) = result
         try:
-            #data = decompress(data)
-            #decoded['data'] = decompress(decoded['data'])
+            # the data may not always be compressed as there isn't always a benefit to it
+            try:
+                data = decompress(data)
+            except error:
+                log('receiving uncompressed data')
             decoded = json.loads(data)
 
             # If the EOF flag is set, exit

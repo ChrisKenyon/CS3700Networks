@@ -8,7 +8,8 @@ import json
 from zlib import compress
 
 MSG_SIZE = 1500
-DATA_SIZE = 1000
+DATA_SIZE = 1500
+COMPRESS_THRESH = 200
 TIMEOUT = 30
 SEQUENCE = 0
 
@@ -26,12 +27,15 @@ def send_next_packet():
 
     data = sys.stdin.read(DATA_SIZE)
     if (len(data) > 0):
-        #msg = json.dumps({"sequence": SEQUENCE, "data": compress(data), "ack": False, "eof": False})
         msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False})
         SEQUENCE += len(data)
 
         print "SENDING", msg, "TO", dest
-        #if sock.sendto(compress(msg), dest) < len(msg):
+        print "orig length: " + str(len(msg))
+        # due to overhead of compression, small strings suffer from zlib compression
+        if len(msg)> COMPRESS_THRESH:
+            msg = compress(msg)
+            print "compressed length: " + str(len(msg))
         if sock.sendto(msg, dest) < len(msg):
             log("[error] unable to fully send packet")
         else:
