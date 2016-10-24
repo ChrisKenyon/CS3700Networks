@@ -5,12 +5,13 @@ import time
 import datetime
 import select
 import json
+import random
 from zlib import compress
 
 MSG_SIZE = 1500
 DATA_SIZE = 1000
 TIMEOUT = 30
-SEQUENCE = 0
+SEQUENCE = random.randrange(4294967295) #random sequence number within the 32-bit range
 
 # Bind to localhost and an ephemeral port
 IP_PORT = sys.argv[1]
@@ -21,21 +22,65 @@ dest = (UDP_IP, UDP_PORT)
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
 
+def send_packet(data, **kwargs):
+    # Helper function to send packet
+    global SEQUENCE
+
+    msg = json.dumps({
+        "sequence": SEQUENCE,
+        "data": data,
+        "ack": kwargs.get("ack", False),
+        "acknum": 0,
+        "eof": kwargs.get("eof", False),
+        "syn": kwargs.get("syn", False),
+        "ad_window": kwargs.get("ad_window", 0),
+        "checksum": kwargs.get("checksum", None)
+    })
+    if data:
+        SEQUENCE += len(data)
+    elif kwargs.get("syn"):
+        SEQUENCE += 1
+    print("SENDING", msg, "TO", dest)
+    if sock.sendto(msg, dest) < len(msg):
+        log("[error] unable to fully send packet")
+        return False
+
+    log("[send data] " + str(SEQUENCE) + " (" + str(len(data)) + ")")
+    return True
+
+def handshake():
+    # Establish handshake with receiver.
+    global SEQUENCE
+
+    offer_hand = send_packet(None, **{"syn": True}) #Initial SYN to receiver
+
+    result = sock.recvfrom(MSG_SIZE)
+
+    if result:
+        (data, addr) = result
+        try:
+            decoded = json.loads(data)
+
+            # If there is a syn/ack, send ack back
+            if decoded['ack'] == SEQUENCE and decoded['syn']:
+                log("[recv syn/ack] " + str(SEQUENCE))
+
+            # Send ack back; break if no more data
+            send_packet(None, **{"ack": decoded['sequence'] + 1})
+            return True
+        except (ValueError, KeyError, TypeError):
+            log("[recv corrupt packet]")
+            return False
+    else:
+        log("[error] timeout on handshake")
+        sys.exit(-1)
+
 def send_next_packet():
     global SEQUENCE
 
     data = sys.stdin.read(DATA_SIZE)
     if (len(data) > 0):
-        #msg = json.dumps({"sequence": SEQUENCE, "data": compress(data), "ack": False, "eof": False})
-        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False})
-        SEQUENCE += len(data)
-
-        print "SENDING", msg, "TO", dest
-        #if sock.sendto(compress(msg), dest) < len(msg):
-        if sock.sendto(msg, dest) < len(msg):
-            log("[error] unable to fully send packet")
-        else:
-            log("[send data] " + str(SEQUENCE) + " (" + str(len(data)) + ")")
+        send_packet(data)
         return True
     else:
         return False

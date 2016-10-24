@@ -4,12 +4,14 @@ from zlib import decompress
 import datetime
 import json
 import sys
+import random
 #import select
 #import time
 UDP_IP = '127.0.0.1'
 UDP_PORT = 0
 MSG_SIZE = 1500
 TIMEOUT = 30
+SEQUENCE = random.randrange(4294967295) #random sequence number within the 32-bit range
 
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
@@ -48,7 +50,7 @@ if __name__=='__main__':
                 sys.stdout.write(decoded['data'])
 
             # Send back an ack to the sender
-            msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])})
+            msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data']) if decoded['data'] else decoded['sequence'] + 1, "sequence": SEQUENCE})
             log("ABOUT TO SEND " + msg)
             if sock.sendto(msg, addr) < len(msg):
                 log("[error] unable to fully send packet")
