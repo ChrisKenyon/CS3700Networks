@@ -8,7 +8,8 @@ import json
 from zlib import compress
 
 MSG_SIZE = 1500
-DATA_SIZE = 1500
+DATA_SIZE = 1300
+COMPRESS_INC = 200
 COMPRESS_THRESH = 200
 TIMEOUT = 30
 SEQUENCE = 0
@@ -27,8 +28,16 @@ def send_next_packet():
 
     data = sys.stdin.read(DATA_SIZE)
     if (len(data) > 0):
-        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False})
+        if len(data) == DATA_SIZE:
+            while(len(compress(data)) < DATA_SIZE):
+                # Need to add data but don't want to go over DATA_SIZE+COMPRESS_INC nor infinitely loop adding small chunks
+                add = sys.stdin.read(max(DATA_SIZE-len(data),COMPRESS_INC))
+                if add:
+                    data += add
+                else: break
+
         SEQUENCE += len(data)
+        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False})
 
         print "SENDING", msg, "TO", dest
         print "orig length: " + str(len(msg))
