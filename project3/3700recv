@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from socket import socket, AF_INET, SOCK_DGRAM
-from zlib import decompress, error
+from zlib import decompress, error, crc32
 import datetime
 import json
 import sys
@@ -25,6 +25,7 @@ if __name__=='__main__':
     UDP_PORT = sock.getsockname()[1]
     log("[bound] " + str(UDP_PORT))
 
+    TEST = 3
     while True:
         result = sock.recvfrom(MSG_SIZE)
         # If nothing is ready, we hit the timeout
@@ -37,6 +38,17 @@ if __name__=='__main__':
             except error:
                 log('receiving uncompressed data')
             decoded = json.loads(data)
+
+            # If the CRC fails
+            if TEST > 0:
+                TEST-=1
+            if 'crc' in decoded and int(decoded['crc']) != crc32(decoded['data'])+TEST:
+                log("crc mismatch")
+                msg = json.dumps({"nack": decoded['sequence'] + len(decoded['data'])})
+                log("ABOUT TO SEND " + msg)
+                if sock.sendto(msg, addr) < len(msg):
+                    log("[error] unable to fully send packet")
+                continue
 
             # If the EOF flag is set, exit
             if (decoded['eof']):

@@ -5,12 +5,14 @@ import time
 import datetime
 import select
 import json
-from zlib import compress
+from zlib import compress, crc32
 
 MSG_SIZE = 1500
 DATA_SIZE = 1300
 COMPRESS_INC = 200
 COMPRESS_THRESH = 200
+#TODO make this not a constant
+HEADER_LEN = 50
 TIMEOUT = 30
 SEQUENCE = 0
 
@@ -35,10 +37,10 @@ def send_next_packet():
                 if add:
                     data += add
                 else: break
+            data += sys.stdin.read(MSG_SIZE-len(compress(data))-HEADER_LEN)
 
         SEQUENCE += len(data)
-        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False})
-
+        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False, 'crc':crc32(data)})
         print "SENDING", msg, "TO", dest
         print "orig length: " + str(len(msg))
         # due to overhead of compression, small strings suffer from zlib compression
@@ -49,9 +51,17 @@ def send_next_packet():
             log("[error] unable to fully send packet")
         else:
             log("[send data] " + str(SEQUENCE) + " (" + str(len(data)) + ")")
-        return True
+        return True, msg
     else:
+        return False, None
+
+def resend_packet(msg):
+    if sock.sendto(msg, dest) < len(msg):
+        log("[error] unable to fully send packet")
         return False
+    else:
+        log("[send data] " + str(SEQUENCE) + " (" + str(len(data)) + ")")
+        return True
 
 if __name__=='__main__':
 
@@ -60,7 +70,7 @@ if __name__=='__main__':
     sock.settimeout(TIMEOUT)
 
     # Send first packet
-    send_next_packet()
+    sent, last_msg = send_next_packet()
 
     # Now read in data, send packets
     while True:
@@ -71,16 +81,20 @@ if __name__=='__main__':
             (data, addr) = result
             try:
                 decoded = json.loads(data)
-
+                if 'nack' in decoded:
+                    log("PACKET FAILED CRC WITH SEQ#"+str(decoded['nack']))
+                    resend_packet(last_msg)
+                    continue
                 # If there is an ack, send next packet
-                if decoded['ack'] == SEQUENCE:
+                elif decoded['ack'] == SEQUENCE:
                     log("[recv ack] " + str(SEQUENCE))
 
                 # Try to send next packet; break if no more data
-                if (not send_next_packet()):
+                sent, last_msg = send_next_packet()
+                if not sent:
                     break
-            except (ValueError, KeyError, TypeError):
-                log("[recv corrupt packet]")
+            except (ValueError, KeyError, TypeError) as e:
+                log("[recv corrupt packet] e"+str(e))
         else:
             log("[error] timeout")
             sys.exit(-1)
