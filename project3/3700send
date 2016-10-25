@@ -45,7 +45,7 @@ def send_packet(data, **kwargs):
         log("[error] unable to fully send packet")
         return False
 
-    log("[send data] " + str(SEQUENCE) + " (" + str(len(data)) + ")")
+    log("[send data] {} ({})".format(str(SEQUENCE), len(data) if data else 0))
     return True
 
 def handshake():
@@ -91,6 +91,7 @@ if __name__=='__main__':
     sock = socket(AF_INET, SOCK_DGRAM)
     sock.settimeout(TIMEOUT)
 
+    handshake()
     # Send first packet
     send_next_packet()
 
