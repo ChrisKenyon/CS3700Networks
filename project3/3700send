@@ -5,6 +5,7 @@ import time
 import datetime
 import select
 import json
+import random
 from zlib import compress, crc32
 
 MSG_SIZE = 1500
@@ -14,7 +15,7 @@ COMPRESS_THRESH = 200
 #TODO make this not a constant
 HEADER_LEN = 50
 TIMEOUT = 30
-SEQUENCE = 0
+SEQUENCE = random.randrange(4294967295) #random sequence number within the 32-bit range
 
 # Bind to localhost and an ephemeral port
 IP_PORT = sys.argv[1]
@@ -24,6 +25,60 @@ dest = (UDP_IP, UDP_PORT)
 
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+
+# helper function to send packets. Ideally this will move some code out of
+# send_next_packet so handshake and send_next_packet share the same sending code.
+# Ran into errors with compression so I'm leaving both implementations in for now
+def send_packet(data, **kwargs):
+    global SEQUENCE
+
+    msg = json.dumps({
+        "sequence": SEQUENCE,
+        "data": data,
+        "ack": kwargs.get("ack", False),
+        "eof": kwargs.get("eof", False),
+        "crc": 0,
+        "syn": kwargs.get("syn", False),
+        "checksum": kwargs.get("checksum", None) #TODO: implement checksum
+    })
+    if data:
+        SEQUENCE += len(data)
+    elif kwargs.get("syn"):
+        SEQUENCE += 1
+    print("SENDING", msg, "TO", dest)
+    if sock.sendto(msg, dest) < len(msg):
+        log("[error] unable to fully send packet")
+        return False
+
+    log("[send data] {} ({})".format(str(SEQUENCE), len(data) if data else 0))
+    return True
+
+def handshake():
+    # Establish handshake with receiver.
+    global SEQUENCE
+
+    offer_hand = send_packet(None, **{"syn": True}) #Initial SYN to receiver
+
+    result = sock.recvfrom(MSG_SIZE)
+
+    if result:
+        (data, addr) = result
+        try:
+            decoded = json.loads(data)
+
+            # If there is a syn/ack, send ack back
+            if decoded['ack'] == SEQUENCE and decoded['syn']:
+                log("[recv syn/ack] " + str(SEQUENCE))
+
+            # Send ack back; break if no more data
+            send_packet(None, **{"ack": decoded['sequence'] + 1})
+            return True
+        except (ValueError, KeyError, TypeError):
+            log("[recv corrupt packet]")
+            return False
+    else:
+        log("[error] timeout on handshake")
+        sys.exit(-1)
 
 def send_next_packet():
     global SEQUENCE
@@ -40,13 +95,21 @@ def send_next_packet():
             data += sys.stdin.read(MSG_SIZE-len(compress(data))-HEADER_LEN)
 
         SEQUENCE += len(data)
-        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False, 'crc':crc32(data)})
-        print "SENDING", msg, "TO", dest
-        print "orig length: " + str(len(msg))
+        msg = json.dumps({
+            "sequence": SEQUENCE,
+            "data": data,
+            "ack": False,
+            "eof": False,
+            "crc": crc32(data),
+            "syn": False,
+            "checksum": None
+            })
+        print("SENDING", msg, "TO", dest)
+        print("orig length: " + str(len(msg)))
         # due to overhead of compression, small strings suffer from zlib compression
         if len(msg)> COMPRESS_THRESH:
             msg = compress(msg)
-            print "compressed length: " + str(len(msg))
+            print("compressed length: " + str(len(msg)))
         if sock.sendto(msg, dest) < len(msg):
             log("[error] unable to fully send packet")
         else:
@@ -69,6 +132,7 @@ if __name__=='__main__':
     sock = socket(AF_INET, SOCK_DGRAM)
     sock.settimeout(TIMEOUT)
 
+    handshake()
     # Send first packet
     sent, last_msg = send_next_packet()
 
