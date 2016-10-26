@@ -65,6 +65,7 @@ if __name__=='__main__':
                 sys.stdout.write(decoded['data'])
 
             # Send back an ack to the sender
+            # TODO: implement advertised window
             msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data']) if decoded['data'] else decoded['sequence'] + 1, "sequence": SEQUENCE})
             log("ABOUT TO SEND " + msg)
             if sock.sendto(msg, addr) < len(msg):

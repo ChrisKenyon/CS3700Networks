@@ -26,19 +26,20 @@ dest = (UDP_IP, UDP_PORT)
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
 
+# helper function to send packets. Ideally this will move some code out of
+# send_next_packet so handshake and send_next_packet share the same sending code.
+# Ran into errors with compression so I'm leaving both implementations in for now
 def send_packet(data, **kwargs):
-    # Helper function to send packet
     global SEQUENCE
 
     msg = json.dumps({
         "sequence": SEQUENCE,
         "data": data,
         "ack": kwargs.get("ack", False),
-        "acknum": 0,
         "eof": kwargs.get("eof", False),
+        "crc": 0,
         "syn": kwargs.get("syn", False),
-        "ad_window": kwargs.get("ad_window", 0),
-        "checksum": kwargs.get("checksum", None)
+        "checksum": kwargs.get("checksum", None) #TODO: implement checksum
     })
     if data:
         SEQUENCE += len(data)
@@ -94,13 +95,21 @@ def send_next_packet():
             data += sys.stdin.read(MSG_SIZE-len(compress(data))-HEADER_LEN)
 
         SEQUENCE += len(data)
-        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False, 'crc':crc32(data)})
-        print "SENDING", msg, "TO", dest
-        print "orig length: " + str(len(msg))
+        msg = json.dumps({
+            "sequence": SEQUENCE,
+            "data": data,
+            "ack": False,
+            "eof": False,
+            "crc": crc32(data),
+            "syn": False,
+            "checksum": None
+            })
+        print("SENDING", msg, "TO", dest)
+        print("orig length: " + str(len(msg)))
         # due to overhead of compression, small strings suffer from zlib compression
         if len(msg)> COMPRESS_THRESH:
             msg = compress(msg)
-            print "compressed length: " + str(len(msg))
+            print("compressed length: " + str(len(msg)))
         if sock.sendto(msg, dest) < len(msg):
             log("[error] unable to fully send packet")
         else:
