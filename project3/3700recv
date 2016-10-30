@@ -13,11 +13,25 @@ MSG_SIZE = 1500
 TIMEOUT = 30
 SEQUENCE = random.randrange(4294967295) #random sequence number within the 32-bit range
 
+msg_buff = {} #{ seq #, data }
+latest_seq_in_order = 0
+
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
 
-if __name__=='__main__':
+def check_buff():
+    global latest_seq_in_order
+    global msg_buff
+    # update the latest received packet in order by finding the first
+    for seq in sorted(msg_buff)[1:]:
+        if (len(msg_buff[seq])-seq) not in msg_buff:
+            break
+        else: latest_seq_in_order = seq
+    # debug
+    log('CHECK BUFF RESULT: '+str(latest_seq_in_order))
+    return latest_seq_in_order + len(msg_buff[latest_seq_in_order])
 
+if __name__=='__main__':
     # Set up the socket
     sock = socket(AF_INET, SOCK_DGRAM)
     sock.bind((UDP_IP,UDP_PORT))
@@ -52,21 +66,29 @@ if __name__=='__main__':
                         log("[error] unable to fully send packet")
                     continue
 
+            if (decoded.get('syn')):
+                if decoded.get('ack'):
+                    msg_buff[decoded['sequence']] = '1'
+                    latest_seq_in_order = decoded['sequence']
+                    continue
+                msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1})
             # If the EOF flag is set, exit
-            if (decoded['eof']):
+            elif (decoded.get('eof')):
                 log("[completed]")
                 sys.exit(0)
-
             # If there is data, we accept it and print it out
-            if (decoded['data']):
-                # If we receive data, we assume it's in-order
-                # You will need to do much more here
+            elif (decoded.get('data')):
+                # ignore duplicates
+                if decoded['sequence'] in msg_buff:
+                    continue
+
                 log("[recv data] " + str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ") ACCEPTED (in-order)")
                 sys.stdout.write(decoded['data'])
 
-            # Send back an ack to the sender
-            # TODO: implement advertised window
-            msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data']) if decoded['data'] else decoded['sequence'] + 1, "sequence": SEQUENCE})
+                msg_buff[decoded['sequence']]=decoded['data']
+                # Send back an ack to the sender
+                # TODO: implement advertised window
+                msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data']), "sequence": SEQUENCE})
             log("ABOUT TO SEND " + msg)
             if sock.sendto(msg, addr) < len(msg):
                 log("[error] unable to fully send packet")

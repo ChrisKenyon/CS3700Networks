@@ -72,7 +72,7 @@ class PacketSender:
 
                 # If there is a syn/ack, send ack back
                 if decoded['ack'] == self.sequence and decoded['syn']:
-                    log("[recv syn/ack] " + str(self.sequence))
+                    log("[recv syn/ack] "+str(decoded['syn'])+'/'+str(decoded['ack']))
 
                 # Send ack back; break if no more data
                 self.send_packet(None, **{"ack": decoded['sequence'] + 1})
