@@ -43,9 +43,10 @@ if __name__=='__main__':
             # If the CRC fails
             if 'crc' in decoded:
                 recv_crc = int(decoded.pop('crc'))
-                if recv_crc != crc32(json.dumps(decoded)):
-                    log("crc mismatch")
-                    msg = json.dumps({"nack": decoded['sequence'] + len(decoded['data'])})
+                calc_crc = sum([crc32(str(val)) for key,val in decoded.iteritems()])
+                if recv_crc != calc_crc:
+                    log("crc mismatch: {} received and {} generated".format(recv_crc,calc_crc))
+                    msg = json.dumps({"nack": decoded['sequence']})
                     log("ABOUT TO SEND " + msg)
                     if sock.sendto(msg, addr) < len(msg):
                         log("[error] unable to fully send packet")
