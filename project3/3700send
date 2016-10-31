@@ -75,7 +75,7 @@ class PacketSender:
                     log("[recv syn/ack] "+str(decoded['syn'])+'/'+str(decoded['ack']))
 
                 # Send ack back; break if no more data
-                self.send_packet(None, **{"ack": decoded['sequence'] + 1})
+                self.send_packet(None, **{"ack": decoded['syn'], "syn": True})
                 return True
             except (ValueError, KeyError, TypeError):
                 log("[recv corrupt packet]")

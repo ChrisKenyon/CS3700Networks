@@ -24,12 +24,18 @@ def check_buff():
     global msg_buff
     # update the latest received packet in order by finding the first
     for seq in sorted(msg_buff)[1:]:
-        if (len(msg_buff[seq])-seq) not in msg_buff:
+        if (seq-len(msg_buff[seq])) not in msg_buff:
             break
-        else: latest_seq_in_order = seq
+        else:
+            length = len(msg_buff[seq])
+            data = msg_buff[seq]
+            log("[PRINTING FROM BUFF] " + str(seq) + " (" + str(len(data)) + ")")
+            sys.stdout.write(data)
+            # also manage the buffer size by deleting any that have already been written
+            msg_buff.pop(latest_seq_in_order)
+            latest_seq_in_order = seq
     # debug
     log('CHECK BUFF RESULT: '+str(latest_seq_in_order))
-    return latest_seq_in_order + len(msg_buff[latest_seq_in_order])
 
 if __name__=='__main__':
     # Set up the socket
@@ -68,24 +74,24 @@ if __name__=='__main__':
 
             if (decoded.get('syn')):
                 if decoded.get('ack'):
-                    msg_buff[decoded['sequence']] = '1'
-                    latest_seq_in_order = decoded['sequence']
+                    msg_buff[decoded['sequence']+1] = ''
+                    latest_seq_in_order = decoded['sequence']+1
                     continue
                 msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1})
             # If the EOF flag is set, exit
             elif (decoded.get('eof')):
+                check_buff()
                 log("[completed]")
                 sys.exit(0)
             # If there is data, we accept it and print it out
             elif (decoded.get('data')):
                 # ignore duplicates
-                if decoded['sequence'] in msg_buff:
+                seq = decoded.get('sequence')
+                if seq in msg_buff or seq<= latest_seq_in_order:
                     continue
 
-                log("[recv data] " + str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ") ACCEPTED (in-order)")
-                sys.stdout.write(decoded['data'])
-
                 msg_buff[decoded['sequence']]=decoded['data']
+                check_buff()
                 # Send back an ack to the sender
                 # TODO: implement advertised window
                 msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data']), "sequence": SEQUENCE})
@@ -95,7 +101,10 @@ if __name__=='__main__':
 
         except (ValueError, KeyError, TypeError) as e:
             log("[recv corrupt packet]")
-            raise e
+            log(str(e))
+            msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
+            if sock.sendto(msg, addr) < len(msg):
+                raise e
     else:
         log("[error] timeout")
         sys.exit(-1)
