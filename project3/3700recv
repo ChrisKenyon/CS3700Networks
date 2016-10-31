@@ -33,6 +33,7 @@ def check_buff():
             sys.stdout.write(data)
             # also manage the buffer size by deleting any that have already been written
             msg_buff.pop(latest_seq_in_order)
+            # and the latest can only move by having the next sequence packet
             latest_seq_in_order = seq
 
 if __name__=='__main__':
@@ -71,15 +72,18 @@ if __name__=='__main__':
                     continue
 
             if (decoded.get('syn')):
+                # handle for third part of handshake
                 if decoded.get('ack'):
                     msg_buff[decoded['sequence']+1] = ''
                     latest_seq_in_order = decoded['sequence']+1
                     continue
+                # second message of handshake
                 msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1})
             # If the EOF flag is set, exit
             elif (decoded.get('eof')):
                 check_buff()
                 if len(msg_buff)>1:
+                    # ask for the next message if we didn't get the end
                     msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
                     sock.sendto(msg, addr)
                     continue
@@ -90,16 +94,20 @@ if __name__=='__main__':
                 sys.exit(0)
             # If there is data, we accept it and print it out
             elif (decoded.get('data')):
-                # ignore duplicates
-                seq = decoded.get('sequence')
-                if seq in msg_buff or seq<= latest_seq_in_order:
-                    continue
 
-                msg_buff[decoded['sequence']]=decoded['data']
-                check_buff()
-                # Send back an ack to the sender
-                # TODO: implement advertised window
-                msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data']), "sequence": SEQUENCE})
+                if latest_seq_in_order == 0:
+                    # we never successfully got the third part of the handshake before starting to get data
+                    msg = json.dumps({"syn":False})
+                else:
+                    # Send back an ack to the sender
+                    seq = decoded.get('sequence')
+                    # TODO: implement advertised window
+                    msg = json.dumps({"ack": decoded['sequence'], "sequence": SEQUENCE})
+                    # ignore duplicates
+                    # TODO watch out for wraparound here.. also implement wraparound??
+                    if not (seq in msg_buff or seq<= latest_seq_in_order):
+                        msg_buff[decoded['sequence']]=decoded['data']
+                        check_buff()
             log("ABOUT TO SEND " + msg)
             if sock.sendto(msg, addr) < len(msg):
                 log("[error] unable to fully send packet")
