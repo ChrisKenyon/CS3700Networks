@@ -34,8 +34,6 @@ def check_buff():
             # also manage the buffer size by deleting any that have already been written
             msg_buff.pop(latest_seq_in_order)
             latest_seq_in_order = seq
-    # debug
-    log('CHECK BUFF RESULT: '+str(latest_seq_in_order))
 
 if __name__=='__main__':
     # Set up the socket
@@ -81,6 +79,13 @@ if __name__=='__main__':
             # If the EOF flag is set, exit
             elif (decoded.get('eof')):
                 check_buff()
+                if len(msg_buff)>1:
+                    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
+                    sock.sendto(msg, addr)
+                    continue
+
+                msg = json.dumps({"fin": True})
+                sock.sendto(msg,addr)
                 log("[completed]")
                 sys.exit(0)
             # If there is data, we accept it and print it out

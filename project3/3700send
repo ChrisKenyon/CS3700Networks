@@ -153,7 +153,10 @@ class PacketSender:
                 (data, addr) = result
                 try:
                     decoded = json.loads(data)
-                    if 'nack' in decoded:
+                    if 'fin' in decoded:
+                        log("receiver has received full message")
+                        break
+                    elif 'nack' in decoded:
                         log("PACKET FAILED CRC WITH SEQ#"+str(decoded['nack']))
                         self.resend_packet(self.msg_buffer.get(decoded['nack']))
                         continue
@@ -164,14 +167,13 @@ class PacketSender:
                     # Try to send next packet; break if no more data
                     sent = self.send_next_packet()
                     if not sent:
-                        break
+                        self.sock.sendto(json.dumps({"eof": True, "data": "", "sequence": self.sequence, "ack": False}), dest)
                 except (ValueError, KeyError, TypeError) as e:
                     log("[recv corrupt packet] e"+str(e))
             else:
                 log("[error] timeout")
                 sys.exit(-1)
 
-        self.sock.sendto(json.dumps({"eof": True, "data": "", "sequence": self.sequence, "ack": False}), dest)
         sys.exit(0)
 
 if __name__=='__main__':
