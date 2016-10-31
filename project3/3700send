@@ -160,12 +160,12 @@ class PacketSender:
         while not self.handshake():
             pass
         # Send first packet
-        self.sock.settimeout(self.rtt)
+        self.sock.settimeout(2*self.rtt) # RTO is 2 * new_rtt
         sent = self.send_next_packet()
 
         # Now read in data, send packets
         while True:
-            self.sock.settimeout(self.rtt)
+            self.sock.settimeout(2*self.rtt)
             log("ABOUT TO SLEEP")
 
             try:
