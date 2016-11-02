@@ -30,6 +30,11 @@ class PacketSender:
     def __init__(self):
         self.sequence = random.randrange(4294967295) #random sequence number within the 32-bit range
         self.msg_buffer = {}  #{seq # : data}
+        self.rtt = 5
+
+    def estimate_rtt(self, old_rtt, new_rtt, alpha=0.875):
+        new_rtt = (alpha * old_rtt) + (1 - alpha) * new_rtt
+        return new_rtt
 
     # helper function to send packets. Ideally this will move some code out of
     # send_next_packet so handshake and send_next_packet share the same sending code.
@@ -59,12 +64,13 @@ class PacketSender:
     def handshake(self):
         # Establish handshake with receiver.
         self.sequence = self.initial_seq
-
+        start = time.time()
         offer_hand = self.send_packet(None, **{"syn": True}) #Initial SYN to receiver
-
         try:
             result = self.sock.recvfrom(MSG_SIZE)
-        except:
+            self.rtt = time.time() - start #Estimate of the RTT
+        except Exception as e:
+            print(e)
             return False
 
         if result:
@@ -120,7 +126,11 @@ class PacketSender:
             if len(msg)> COMPRESS_THRESH:
                 msg = compress(msg)
                 #print("compressed length: " + str(len(msg)))
-            if self.sock.sendto(msg, dest) < len(msg):
+            start = time.time()
+            sock_response = self.sock.sendto(msg, dest)
+            new_rtt = time.time() - start
+            rtt_estimate = self.estimate_rtt(self.rtt, new_rtt)
+            if sock_response < len(msg):
                 log("[error] unable to fully send packet")
             else:
                 log("[send data] " + str(self.sequence) + " (" + str(len(data)) + ")")
@@ -149,14 +159,13 @@ class PacketSender:
         # run til it succeeds
         while not self.handshake():
             pass
-
         # Send first packet
-        self.sock.settimeout(TIMEOUT) # TODO with rtt
+        self.sock.settimeout(2*self.rtt) # RTO is 2 * new_rtt
         sent = self.send_next_packet()
 
         # Now read in data, send packets
         while True:
-            self.sock.settimeout(TIMEOUT) # TODO with rtt
+            self.sock.settimeout(2*self.rtt)
             log("ABOUT TO SLEEP")
 
             try:
