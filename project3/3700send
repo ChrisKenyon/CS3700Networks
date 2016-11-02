@@ -9,7 +9,7 @@ import random
 from zlib import compress, crc32
 
 MSG_SIZE = 1500
-DATA_SIZE = 1300
+DATA_SIZE = 1200
 COMPRESS_INC = 200
 COMPRESS_THRESH = 200
 #TODO make this not a constant
@@ -99,7 +99,6 @@ class PacketSender:
 
 
     def load_next_packet(self, num_packets):
-        #eof = False
         for i in range(num_packets):
             data = sys.stdin.read(DATA_SIZE)
             if (len(data) > 0):
@@ -197,7 +196,8 @@ class PacketSender:
                     new_rtt =  time.time() - self.msg_time[seq] + 0.005 # TODO hardcoded sample added
                     self.rtt = self.estimate_rtt(self.rtt, new_rtt)
 
-                self.load_next_packet(1)
+                if len(self.msg_buffer)==0:
+                    self.load_next_packet(1)
                 self.send_next_packet()
                 #sys.exit(-1)
                 #TODO adjust timeout with RTT
@@ -223,7 +223,6 @@ class PacketSender:
             elif 'nack' in decoded:
                 log("PACKET FAILED CRC WITH SEQ#"+str(decoded['nack']))
                 self.send_next_packet()
-                #self.resend_packet(self.msg_buffer.get(decoded['nack']))
                 return False
             # If there is an ack, send next packet
             seq = decoded['ack']
@@ -235,9 +234,9 @@ class PacketSender:
             self.msg_buffer.pop(seq)
 
             # Try to send next packet; break if no more data
-            loaded = self.load_next_packet(1)
-            if loaded:
-                self.send_next_packet()
+            if len(self.msg_buffer)==0:
+                loaded = self.load_next_packet(1)
+            self.send_next_packet()
             return False
         except (ValueError, KeyError, TypeError) as e:
             log("[recv corrupt packet] "+str(e))
