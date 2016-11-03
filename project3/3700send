@@ -33,8 +33,8 @@ class PacketSender:
         self.duptrack = []  # [seq #, number ACKs]
         self.ssthresh = 65535
         self.sequence = random.randrange(4294967295) #random sequence number within the 32-bit range
-        # Operate msg_buffer as queue. Insert new at front, pop oldest at back
-        self.msg_buffer = []  # [[seq #, data}], [seq #2, data], ...]
+
+        self.msg_buffer = {}
         self.msg_time = {}
         self.rtt = 2.0
 
@@ -128,21 +128,17 @@ class PacketSender:
                 #debug
                 msg_dict['crc'] = sum([crc32(str(val)) for key,val in msg_dict.iteritems()])
                 msg=json.dumps(msg_dict)
-                self.msg_buffer.insert(0, [self.sequence, msg])
+                self.msg_buffer[self.sequence]=msg
             else:
                 # load eof if its not already loaded
-                if len(self.msg_buffer) > 0 and self.sequence+1 not in self.msg_buffer[0]:
-                    self.msg_buffer.insert(0, {
-                        self.sequence+1 : json.dumps({"eof": True, "data": "", "sequence": self.sequence+1, "ack": False})
-                    })
-
+                if self.sequence+1 not in self.msg_buffer:
+                    self.msg_buffer[self.sequence+1]=json.dumps({"eof": True, "data": "", "sequence": self.sequence+1, "ack": False})
 
     def send_next_packet(self):
 
         if len(self.msg_buffer)>0: # TODO greater than cmwd??
-            next = self.msg_buffer.pop()
-            seq = next[0]
-            msg = next[1]
+            seq = sorted(self.msg_buffer)[0]
+            msg = self.msg_buffer[seq]
             # Pre-queue data structure for msg_buffer
 
             # seq = sorted(self.msg_buffer)[0]
@@ -267,9 +263,7 @@ class PacketSender:
                 log("[congestion avoidance] set cwnd to {} ".format(self.cwindow))
             new_rtt =  time.time() - self.msg_time[seq]
             self.rtt = self.estimate_rtt(self.rtt, new_rtt)
-            self.msg_time.pop(seq)
-            if len(self.msg_buffer) > 0:
-                self.msg_buffer.pop() # Implemented as queue, but how to make sure we're not popping a different frame than with seq
+            self.msg_buffer.pop(seq)
             # self.msg_buffer.pop(seq)
 
             # Try to send next packet; break if no more data
@@ -279,7 +273,7 @@ class PacketSender:
             return False
         except (ValueError, KeyError, TypeError) as e:
             log("[recv corrupt packet] "+str(e))
-            # log(str(sorted(self.msg_buffer)))
+            log(str(sorted(self.msg_buffer)))
 
 if __name__=='__main__':
 
