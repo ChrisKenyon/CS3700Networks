@@ -181,7 +181,7 @@ class PacketSender:
         self.sock.settimeout(2.0*self.rtt) # RTO is 2 * new_rtt
 
         # TODO self.load_next_packet(cmwd-len(self.msg_buffer)) ?
-        self.load_next_packet(1)
+        self.load_next_packet(int(math.floor(self.cwindow) - len(self.msg_buffer)))
         self.send_next_packet()
         self.receive_loop()
 
@@ -205,7 +205,9 @@ class PacketSender:
                 log("[error] timeout")
                 # Reset congestion window to 1 on timeout
                 self.ssthresh = round(float(self.cwindow)/float(2))
+                log("[ssthresh] set to {}".format(self.ssthresh))
                 self.cwindow = 1
+                log("[timeout] set cwnd to 1")
 
                 # resend earliest unack'd TODO: it would only be one packet as of now, but with a window the earliest may not be the last sent
                 #log("RESENDING "+str(sorted(self.msg_buffer)))
@@ -252,15 +254,17 @@ class PacketSender:
                 if self.duptrack[1] == 3:
                     #TODO: retransmit
                     self.cwindow = int(round(float(self.ssthresh)/float(2)))
-                    self.ssthresh
+                    log("[triplicate ACK] set cwnd to {}".format(self.cwindow))
             else:
                 self.duptrack = [seq, 1]
             # Slow Start
             if self.cwindow < self.ssthresh:
                 self.cwindow += 1
+                log("[slow start] set cwnd to {}".format(self.cwindow))
             # Congestion avoidance
             else:
                 self.cwindow += float(1)/float(math.floor(self.cwindow))
+                log("[congestion avoidance] set cwnd to {} ".format(self.cwindow))
             new_rtt =  time.time() - self.msg_time[seq]
             self.rtt = self.estimate_rtt(self.rtt, new_rtt)
             self.msg_time.pop(seq)
@@ -276,7 +280,6 @@ class PacketSender:
         except (ValueError, KeyError, TypeError) as e:
             log("[recv corrupt packet] "+str(e))
             # log(str(sorted(self.msg_buffer)))
-
 
 if __name__=='__main__':
 
