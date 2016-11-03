@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import math
 import sys
 from socket import socket, AF_INET, SOCK_DGRAM
 import time
@@ -28,6 +29,8 @@ def log(string):
 class PacketSender:
 
     def __init__(self):
+        self.cwindow = 1
+        self.ssthresh = 65535
         self.sequence = random.randrange(4294967295) #random sequence number within the 32-bit range
         self.msg_buffer = {}  #{seq # : data}
         self.msg_time = {}
@@ -86,7 +89,8 @@ class PacketSender:
                 # If there is a syn/ack, send ack back
                 if decoded['ack'] == self.sequence and decoded['syn']:
                     log("[recv syn/ack] "+str(decoded['syn'])+'/'+str(decoded['ack']))
-
+                if 'adv_window' in decoded:
+                    self.ssthresh = decoded['adv_window']
                 # Send ack back; break if no more data
                 self.send_packet(None, **{"ack": decoded['syn'], "syn": True})
                 return True
@@ -189,6 +193,9 @@ class PacketSender:
                     break
             else:
                 log("[error] timeout")
+                # Reset congestion window to 1 on timeout
+                self.cwindow = 1
+
                 # resend earliest unack'd TODO: it would only be one packet as of now, but with a window the earliest may not be the last sent
                 #log("RESENDING "+str(sorted(self.msg_buffer)))
                 if len(self.msg_time)>0:
@@ -227,7 +234,13 @@ class PacketSender:
             # If there is an ack, send next packet
             seq = decoded['ack']
             log("[recv ack] " + str(seq))
-
+            # Slow Start
+            if self.cwindow < self.ssthresh:
+                self.cwindow += 1
+            # Congestion avoidance
+            else:
+                # Exit out of slowstart if applicable
+                self.cwindow += float(1)/float(math.floor(self.cwindow))
             new_rtt =  time.time() - self.msg_time[seq]
             self.rtt = self.estimate_rtt(self.rtt, new_rtt)
             self.msg_time.pop(seq)

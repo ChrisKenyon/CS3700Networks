@@ -12,6 +12,7 @@ UDP_PORT = 0
 MSG_SIZE = 1500
 TIMEOUT = 30
 SEQUENCE = random.randrange(4294967295) #random sequence number within the 32-bit range
+AWINDOW = 10 #advertised window
 
 msg_buff = {} #{ seq #, data }
 latest_seq_in_order = 0
@@ -78,7 +79,7 @@ if __name__=='__main__':
                     latest_seq_in_order = decoded['sequence']+1
                     continue
                 # second message of handshake
-                msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1})
+                msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1, "adv_window": AWINDOW})
             # If the EOF flag is set, exit
             elif (decoded.get('eof')):
                 check_buff()
@@ -102,7 +103,7 @@ if __name__=='__main__':
                     # Send back an ack to the sender
                     seq = decoded.get('sequence')
                     # TODO: implement advertised window
-                    msg = json.dumps({"ack": decoded['sequence'], "sequence": SEQUENCE})
+                    msg = json.dumps({"ack": decoded['sequence'], "sequence": SEQUENCE, "adv_window": AWINDOW})
                     # ignore duplicates
                     # TODO watch out for wraparound here.. also implement wraparound??
                     if not (seq in msg_buff or seq<= latest_seq_in_order):
