@@ -264,7 +264,6 @@ class PacketSender:
             new_rtt =  time.time() - self.msg_time[seq]
             self.rtt = self.estimate_rtt(self.rtt, new_rtt)
             self.msg_buffer.pop(seq)
-            # self.msg_buffer.pop(seq)
 
             # Try to send next packet; break if no more data
             if len(self.msg_buffer)==0:

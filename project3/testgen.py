@@ -3,7 +3,7 @@ import random
 
 def gen_random_charstring():
     charstring = ""
-    length = random.randrange(64, 256)
+    length = random.randrange(64)
     for i in range(length):
         char = random.randrange(48, 122)
         charstring += chr(char)
