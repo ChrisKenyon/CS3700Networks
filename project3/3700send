@@ -85,14 +85,17 @@ class PacketSender:
             print(e)
             return False
 
+        # Step 2. Got something back from receiver
         if result:
             (data, addr) = result
             try:
                 decoded = json.loads(data)
 
                 # If there is a syn/ack, send ack back
-                if decoded['ack'] == self.sequence and decoded['syn']:
+                if decoded.get('ack') == self.sequence and decoded.get('syn'):
                     log("[recv syn/ack] {}/{}".format(str(decoded['syn']), str(decoded['ack'])))
+                else:
+                    return False
                 if 'adv_window' in decoded:
                     self.ssthresh = decoded['adv_window']
                 # Send ack back; break if no more data
@@ -186,12 +189,12 @@ class PacketSender:
         self.sock = socket(AF_INET, SOCK_DGRAM)
 
         # run til it succeeds
-        while not self.handshake():
-            pass
+        handshake = self.handshake()
+        while not handshake:
+            handshake = self.handshake()
         # Send first packet
         self.sock.settimeout(2.0*self.rtt) # RTO is 2 * new_rtt
 
-        # TODO self.load_next_packet(cmwd-len(self.msg_buffer)) ?
         self.load_next_packet(int(math.floor(self.cwindow) - len(self.msg_buffer)))
         self.send_next_packet()
         self.receive_loop()
@@ -241,11 +244,12 @@ class PacketSender:
             #need to make sure the third part of the handshake was registered
             #so that the last_sequence and msg_buff are initiated on the receiver
             # there's no way to know unless we get another syn back
-            if 'syn' in decoded and not decoded['syn']:
+            if len(decoded) == 1 and 'syn' in decoded and not decoded['syn']:
                 # this is a special case which requires special attention....
                 # run til it succeeds
-                while not self.handshake():
-                    pass
+                handshake = self.handshake()
+                while not handshake:
+                    handshake = self.handshake()
                 self.send_next_packet()
                 return False
             elif 'fin' in decoded:
