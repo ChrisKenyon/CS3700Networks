@@ -253,6 +253,8 @@ class PacketSender:
                 return True
             elif 'nack' in decoded:
                 log("PACKET FAILED CRC WITH SEQ#"+str(decoded['nack']))
+                # This should reset and re-send needed packet
+                self.msg_buffer[decoded['nack']][0] = False
                 self.send_next_packet()
                 return False
             # If there is an ack, send next packet
