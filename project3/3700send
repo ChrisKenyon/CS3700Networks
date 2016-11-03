@@ -34,9 +34,11 @@ class PacketSender:
         self.ssthresh = 65535
         self.sequence = random.randrange(4294967295) #random sequence number within the 32-bit range
 
-        self.msg_buffer = {}
+        self.msg_buffer = {} #{seq #: [inflight, data]}
         self.msg_time = {}
         self.rtt = 2.0
+        ## DEBUG ##
+        self.inflight = 0
 
     def estimate_rtt(self, old_rtt, new_rtt, alpha=0.875):
         log('updating rtt {} with new rtt {}'.format(old_rtt,new_rtt))
@@ -90,7 +92,7 @@ class PacketSender:
 
                 # If there is a syn/ack, send ack back
                 if decoded['ack'] == self.sequence and decoded['syn']:
-                    log("[recv syn/ack] "+str(decoded['syn'])+'/'+str(decoded['ack']))
+                    log("[recv syn/ack] {}/{}".format(str(decoded['syn']), str(decoded['ack'])))
                 if 'adv_window' in decoded:
                     self.ssthresh = decoded['adv_window']
                 # Send ack back; break if no more data
@@ -128,17 +130,27 @@ class PacketSender:
                 #debug
                 msg_dict['crc'] = sum([crc32(str(val)) for key,val in msg_dict.iteritems()])
                 msg=json.dumps(msg_dict)
-                self.msg_buffer[self.sequence]=msg
+                self.msg_buffer[self.sequence]=[False, msg]
             else:
                 # load eof if its not already loaded
                 if self.sequence+1 not in self.msg_buffer:
-                    self.msg_buffer[self.sequence+1]=json.dumps({"eof": True, "data": "", "sequence": self.sequence+1, "ack": False})
+                    self.msg_buffer[self.sequence+1]=[False, json.dumps({"eof": True, "data": "", "sequence": self.sequence+1, "ack": False})]
+        log("[message buff loaded] {}".format([[key, value[0]] for key, value in self.msg_buffer.items()]))
 
     def send_next_packet(self):
-
         if len(self.msg_buffer)>0: # TODO greater than cmwd??
-            seq = sorted(self.msg_buffer)[0]
-            msg = self.msg_buffer[seq]
+            # Loop thru msg_buffer to find first packet not yet in flight
+            seq = 0 # this is just so we can look at the msg_buffer outside of the loop
+            for i in range(len(self.msg_buffer)):
+                seq = sorted(self.msg_buffer)[i]
+                # Packet is in flight
+                if not self.msg_buffer[seq][0]:
+                    msg = self.msg_buffer[seq][1]
+                    break
+            if self.msg_buffer[seq][0]:
+                # We iterated to end of message buffer and all packets are in flight. Return
+                return False
+
             # Pre-queue data structure for msg_buffer
 
             # seq = sorted(self.msg_buffer)[0]
@@ -153,11 +165,14 @@ class PacketSender:
                 #print("compressed length: " + str(len(msg)))
             self.msg_time[seq] = time.time()
             sock_response = self.sock.sendto(msg, dest)
+            # Mark packet as in flight
+            self.msg_buffer[seq][0] = True
 
             if sock_response < len(msg):
                 log("[error] unable to fully send packet")
             else:
-                log("[send data] " + str(self.sequence) + " (" + str(msg_len) + ")")
+                self.inflight += 1
+                log("[send data] {} ({}) (inflight={})".format(str(seq), str(msg_len), self.inflight))
                 log("with rtt " + str(self.rtt))
             return True
         else:
@@ -242,7 +257,8 @@ class PacketSender:
                 return False
             # If there is an ack, send next packet
             seq = decoded['ack']
-            log("[recv ack] " + str(seq))
+            self.inflight -= 1
+            log("[recv ack] {} (inflight={})".format(str(seq), self.inflight))
             # Tracking duplicates for fast recovery
             if len(self.duptrack) == 2 and self.duptrack[0] == seq:
                 self.duptrack[1] += 1
@@ -266,9 +282,11 @@ class PacketSender:
             self.msg_buffer.pop(seq)
 
             # Try to send next packet; break if no more data
-            if len(self.msg_buffer)==0:
-                loaded = self.load_next_packet(1)
-            self.send_next_packet()
+            if len(self.msg_buffer) < int(math.floor(self.cwindow)):
+                loaded = self.load_next_packet(int(math.floor(self.cwindow) - len(self.msg_buffer)))
+            # Send max amt of packets determined by cwnd
+            for i in range(len(self.msg_buffer)):
+                self.send_next_packet()
             return False
         except (ValueError, KeyError, TypeError) as e:
             log("[recv corrupt packet] "+str(e))
