@@ -75,7 +75,7 @@ class PacketSender:
         self.sequence = self.initial_seq
         # TODO figure out good timeout val for handshake
         # should it be getting a rtt time??
-        self.sock.settimeout(0.5)
+        self.sock.settimeout(1.5)
         start = time.time()
         offer_hand = self.send_packet(None, **{"syn": True}) #Initial SYN to receiver
         try:

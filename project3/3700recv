@@ -67,10 +67,12 @@ if __name__=='__main__':
                 calc_crc = sum([crc32(str(val)) for key,val in decoded.iteritems()])
                 if recv_crc != calc_crc:
                     log("crc mismatch: {} received and {} generated".format(recv_crc,calc_crc))
+                    '''
                     msg = json.dumps({"nack": decoded['sequence']})
                     log("ABOUT TO SEND " + msg)
                     if sock.sendto(msg, addr) < len(msg):
                         log("[error] unable to fully send packet")
+                    '''
                     continue
 
             if (decoded.get('syn')):
@@ -107,8 +109,10 @@ if __name__=='__main__':
                 check_buff()
                 if len(msg_buff)>1 or not end_of_data_found:
                     # ask for the next message if we didn't get the end
+                    '''
                     msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
                     sock.sendto(msg, addr)
+                    '''
                     continue
 
                 msg = json.dumps({"fin": True})
