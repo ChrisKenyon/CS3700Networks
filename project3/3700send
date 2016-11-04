@@ -242,7 +242,8 @@ class PacketSender:
                 #log("RESENDING "+str(sorted(self.msg_buffer)))
                 if len(self.msg_time)>0:
                     seq = sorted(self.msg_time)[0]
-                    new_rtt =  time.time() - self.msg_time[seq] + 0.005 # TODO hardcoded sample added
+                    new_rtt =  time.time() - self.msg_time[seq]
+                    self.msg_time[seq] = time.time()
                     self.rtt = self.estimate_rtt(self.rtt, new_rtt)
 
                 if len(self.msg_buffer)==0:
@@ -273,6 +274,9 @@ class PacketSender:
                 return "packet_failed"
             # If there is an ack, send next packet
             seq = decoded['ack']
+            new_rtt =  time.time() - self.msg_time[seq]
+            self.rtt = self.estimate_rtt(self.rtt, new_rtt)
+
             self.inflight = max(0, self.inflight + 1)
             log("[recv ack] {} (inflight={})".format(str(seq), self.inflight))
             # Tracking duplicates for fast recovery
@@ -280,7 +284,6 @@ class PacketSender:
                 self.duptrack[1] += 1
                 # Fast retransmit
                 if self.duptrack[1] == 3:
-                    #TODO: retransmit
                     self.cwindow = int(round(float(self.ssthresh)/float(2)))
                     log("[triplicate ACK] set cwnd to {}".format(self.cwindow))
             else:
@@ -293,8 +296,6 @@ class PacketSender:
             else:
                 self.cwindow += float(1)/float(math.floor(self.cwindow))
                 log("[congestion avoidance] set cwnd to {} ".format(self.cwindow))
-            new_rtt =  time.time() - self.msg_time[seq]
-            self.rtt = self.estimate_rtt(self.rtt, new_rtt)
             self.msg_buffer.pop(seq)
 
             # Try to send next packet; break if no more data
