@@ -13,7 +13,6 @@ MSG_SIZE = 1500
 DATA_SIZE = 1200
 COMPRESS_INC = 200
 COMPRESS_THRESH = 200
-#TODO make this not a constant
 HEADER_LEN = 50
 TIMEOUT = 5
 
@@ -141,7 +140,7 @@ class PacketSender:
         log("[message buff loaded] {}".format([[key, value[0]] for key, value in self.msg_buffer.items()]))
 
     def send_next_packet(self):
-        if len(self.msg_buffer)>0: # TODO greater than cmwd??
+        if len(self.msg_buffer)>0:
             # Loop thru msg_buffer to find first packet not yet in flight
             seq = 0 # this is just so we can look at the msg_buffer outside of the loop
             for i in range(len(self.msg_buffer)):
@@ -156,16 +155,10 @@ class PacketSender:
 
             # Pre-queue data structure for msg_buffer
 
-            # seq = sorted(self.msg_buffer)[0]
-            # msg = self.msg_buffer[seq]
-            # DEBUG
-            #log("SENDING "+msg+"TO "+ str(dest))
-            #log("orig length: " + str(len(msg)))
             # due to overhead of compression, small strings suffer from zlib compression
             msg_len = len(msg)
             if msg_len> COMPRESS_THRESH:
                 msg = compress(msg)
-                #print("compressed length: " + str(len(msg)))
             self.msg_time[seq] = time.time()
             sock_response = self.sock.sendto(msg, dest)
             # Mark packet as in flight
@@ -231,15 +224,12 @@ class PacketSender:
                 self.cwindow = 1
                 log("[timeout] cwindow set to 1")
 
-                # We'll say no packets are in flight anymore
                 self.inflight = 0
                 for seq, data in self.msg_buffer.items():
                     self.msg_buffer[seq][0] = False
 
                 log("[timeout] msg_buffer: {}".format([[key, value[0]] for key, value in self.msg_buffer.items()]))
 
-                # resend earliest unack'd TODO: it would only be one packet as of now, but with a window the earliest may not be the last sent
-                #log("RESENDING "+str(sorted(self.msg_buffer)))
                 if len(self.msg_time)>0:
                     seq = sorted(self.msg_time)[0]
                     new_rtt =  time.time() - self.msg_time[seq]
@@ -249,8 +239,6 @@ class PacketSender:
                 if len(self.msg_buffer)==0:
                     self.load_next_packet(1)
                 self.send_next_packet()
-                #sys.exit(-1)
-                #TODO adjust timeout with RTT
 
         sys.exit(0)
 
