@@ -230,12 +230,12 @@ class PacketSender:
 
                 log("[timeout] msg_buffer: {}".format([[key, value[0]] for key, value in self.msg_buffer.items()]))
 
-                if len(self.msg_time)>0:
-                    seq = sorted(self.msg_time)[0]
-                    new_rtt =  time.time() - self.msg_time[seq]
-                    self.msg_time[seq] = time.time()
-                    self.rtt = self.estimate_rtt(self.rtt, new_rtt)
-
+                # if len(self.msg_time)>0:
+                #     seq = sorted(self.msg_time)[0]
+                #     new_rtt =  time.time() - self.msg_time[seq]
+                #     self.msg_time[seq] = time.time()
+                #     self.rtt = self.estimate_rtt(self.rtt, new_rtt)
+                #
                 if len(self.msg_buffer)==0:
                     self.load_next_packet(1)
                 self.send_next_packet()
