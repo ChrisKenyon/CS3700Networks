@@ -16,7 +16,7 @@ AWINDOW = 10 #advertised window
 
 msg_buff = {} #{ seq #, data }
 latest_seq_in_order = 0
-
+syn_seq = 0
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
 
@@ -82,7 +82,10 @@ if __name__=='__main__':
                     latest_seq_in_order = decoded['sequence']+1
                     log('[handshake] complete at SEQ#{}'.format(latest_seq_in_order))
                     continue
+
                 # second message of handshake
+                syn_seq = decoded['sequence']+2
+                msg_buff[syn_seq] = ''
                 msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1, "adv_window": AWINDOW})
             # If there is data, we accept it and print it out
             elif (decoded.get('data')):
@@ -90,8 +93,12 @@ if __name__=='__main__':
                 if latest_seq_in_order == 0:
                     # we never successfully got the third part of the handshake before starting to get data
                     # msg = json.dumps({"syn":False})
-                    latest_seq_in_order = seq
-                    log('[handshake] complete through data at SEQ#{}'.format(latest_seq_in_order))
+                    msg_buff[seq]=decoded['data']
+                    # if this is the first data packet
+                    if seq-len(decoded['data'])==syn_seq:
+                        latest_seq_in_order=syn_seq
+                        log('[handshake] complete through data at SEQ#{}'.format(seq))
+                        check_buff()
                 #elif latest_seq_in_order != seq - len(decoded['data']):
                 #    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
                 #else:
@@ -100,7 +107,7 @@ if __name__=='__main__':
                 # ignore duplicates
                 # TODO watch out for wraparound here.. also implement wraparound??
                 if not (seq in msg_buff or seq<= latest_seq_in_order):
-                    msg_buff[decoded['sequence']]=decoded['data']
+                    msg_buff[seq]=decoded['data']
                     if decoded.get('eof'):
                         end_of_data_found = True
                     check_buff()
