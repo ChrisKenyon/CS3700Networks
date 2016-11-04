@@ -213,15 +213,28 @@ class PacketSender:
             if result:
                 (data, addr) = result
                 finished = self.handle_data(data)
-                if finished:
+                # Trying to re-establish a bad handshake within handle_data cause timeout errors
+                if finished == "bad_handshake":
+                    handshake = self.handshake()
+                    while not handshake:
+                        handshake = self.handshake()
+                    self.send_next_packet()
+                elif finished:
                     break
             else:
                 log("[error] timeout")
                 # Reset congestion window to 1 on timeout
                 self.ssthresh = round(float(self.cwindow)/float(2))
-                log("[ssthresh] set to {}".format(self.ssthresh))
+                log("[timeout] ssthresh set to {}".format(self.ssthresh))
                 self.cwindow = 1
-                log("[timeout] set cwnd to 1")
+                log("[timeout] cwindow set to 1")
+
+                # We'll say no packets are in flight anymore
+                self.inflight = 0
+                for seq, data in self.msg_buffer.items():
+                    data[0] = False
+
+                log("[timeout] msg_buffer: {}".format([[key, value[0]] for key, value in self.msg_buffer.items()]))
 
                 # resend earliest unack'd TODO: it would only be one packet as of now, but with a window the earliest may not be the last sent
                 #log("RESENDING "+str(sorted(self.msg_buffer)))
@@ -247,11 +260,7 @@ class PacketSender:
             if len(decoded) == 1 and 'syn' in decoded and not decoded['syn']:
                 # this is a special case which requires special attention....
                 # run til it succeeds
-                handshake = self.handshake()
-                while not handshake:
-                    handshake = self.handshake()
-                self.send_next_packet()
-                return False
+                return "bad_handshake"
             elif 'fin' in decoded:
                 log("receiver has received full message")
                 return True
