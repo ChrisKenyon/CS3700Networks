@@ -33,7 +33,7 @@ def check_buff():
             log("[PRINTING FROM BUFF] " + str(seq) + " (" + str(len(data)) + ")")
             sys.stdout.write(data)
             # also manage the buffer size by deleting any that have already been written
-            msg_buff.pop(latest_seq_in_order)
+            msg_buff.pop(seq-length)
             # and the latest can only move by having the next sequence packet
             latest_seq_in_order = seq
 
@@ -47,6 +47,7 @@ if __name__=='__main__':
     UDP_PORT = sock.getsockname()[1]
     log("[bound] " + str(UDP_PORT))
 
+    end_of_data_found = False
     while True:
         result = sock.recvfrom(MSG_SIZE)
         # If nothing is ready, we hit the timeout
@@ -81,10 +82,30 @@ if __name__=='__main__':
                     continue
                 # second message of handshake
                 msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1, "adv_window": AWINDOW})
+            # If there is data, we accept it and print it out
+            elif (decoded.get('data')):
+                seq = decoded.get('sequence')
+                if latest_seq_in_order == 0:
+                    # we never successfully got the third part of the handshake before starting to get data
+                    # msg = json.dumps({"syn":False})
+                    latest_seq_in_order = seq
+                    log('[handshake] complete through data at SEQ#{}'.format(latest_seq_in_order))
+                #elif latest_seq_in_order != seq - len(decoded['data']):
+                #    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
+                #else:
+                # Send back an ack to the sender
+                msg = json.dumps({"ack": decoded['sequence'], "sequence": seq, "adv_window": AWINDOW})
+                # ignore duplicates
+                # TODO watch out for wraparound here.. also implement wraparound??
+                if not (seq in msg_buff or seq<= latest_seq_in_order):
+                    msg_buff[decoded['sequence']]=decoded['data']
+                    if decoded.get('eof'):
+                        end_of_data_found = True
+                    check_buff()
             # If the EOF flag is set, exit
             elif (decoded.get('eof')):
                 check_buff()
-                if len(msg_buff)>1:
+                if len(msg_buff)>1 or not end_of_data_found:
                     # ask for the next message if we didn't get the end
                     msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
                     sock.sendto(msg, addr)
@@ -94,22 +115,7 @@ if __name__=='__main__':
                 sock.sendto(msg,addr)
                 log("[completed]")
                 sys.exit(0)
-            # If there is data, we accept it and print it out
-            elif (decoded.get('data')):
-                seq = decoded.get('sequence')
-                if latest_seq_in_order == 0:
-                    # we never successfully got the third part of the handshake before starting to get data
-                    msg = json.dumps({"syn":False})
-                #elif latest_seq_in_order != seq - len(decoded['data']):
-                #    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
-                else:
-                    # Send back an ack to the sender
-                    msg = json.dumps({"ack": decoded['sequence'], "sequence": seq, "adv_window": AWINDOW})
-                    # ignore duplicates
-                    # TODO watch out for wraparound here.. also implement wraparound??
-                    if not (seq in msg_buff or seq<= latest_seq_in_order):
-                        msg_buff[decoded['sequence']]=decoded['data']
-                        check_buff()
+
             log("ABOUT TO SEND " + msg)
             if sock.sendto(msg, addr) < len(msg):
                 log("[error] unable to fully send packet")
@@ -119,7 +125,7 @@ if __name__=='__main__':
             log(str(e))
             msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
             if sock.sendto(msg, addr) < len(msg):
-                raise e
+                pass
     else:
         log("[error] timeout")
         sys.exit(-1)
