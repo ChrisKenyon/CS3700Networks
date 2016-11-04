@@ -102,7 +102,7 @@ class PacketSender:
                 self.send_packet(None, **{"ack": decoded['syn'], "syn": True})
                 return True
             except (ValueError, KeyError, TypeError):
-                log("[recv corrupt packet]")
+                log("[recv corrupt handshake packet]")
                 return False
         else:
             log("[error] timeout on handshake")
@@ -273,7 +273,7 @@ class PacketSender:
                 return "packet_failed"
             # If there is an ack, send next packet
             seq = decoded['ack']
-            self.inflight -= 1
+            self.inflight = max(0, self.inflight + 1)
             log("[recv ack] {} (inflight={})".format(str(seq), self.inflight))
             # Tracking duplicates for fast recovery
             if len(self.duptrack) == 2 and self.duptrack[0] == seq:
