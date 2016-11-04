@@ -100,12 +100,12 @@ if __name__=='__main__':
                 if latest_seq_in_order == 0:
                     # we never successfully got the third part of the handshake before starting to get data
                     msg = json.dumps({"syn":False})
-                elif latest_seq_in_order != seq - len(decoded['data']):
-                    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
+                #elif latest_seq_in_order != seq - len(decoded['data']):
+                #    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
                 else:
                     # Send back an ack to the sender
                     # TODO: implement advertised window
-                    msg = json.dumps({"ack": decoded['sequence'], "sequence": SEQUENCE, "adv_window": AWINDOW})
+                    msg = json.dumps({"ack": decoded['sequence'], "sequence": seq, "adv_window": AWINDOW})
                     # ignore duplicates
                     # TODO watch out for wraparound here.. also implement wraparound??
                     if not (seq in msg_buff or seq<= latest_seq_in_order):
