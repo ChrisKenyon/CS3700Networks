@@ -219,6 +219,8 @@ class PacketSender:
                     while not handshake:
                         handshake = self.handshake()
                     self.send_next_packet()
+                elif finished == "packet_failed":
+                    self.send_next_packet()
                 elif finished:
                     break
             else:
@@ -232,7 +234,7 @@ class PacketSender:
                 # We'll say no packets are in flight anymore
                 self.inflight = 0
                 for seq, data in self.msg_buffer.items():
-                    data[0] = False
+                    self.msg_buffer[seq][0] = False
 
                 log("[timeout] msg_buffer: {}".format([[key, value[0]] for key, value in self.msg_buffer.items()]))
 
@@ -268,8 +270,7 @@ class PacketSender:
                 log("PACKET FAILED CRC WITH SEQ#"+str(decoded['nack']))
                 # This should reset and re-send needed packet
                 self.msg_buffer[decoded['nack']][0] = False
-                self.send_next_packet()
-                return False
+                return "packet_failed"
             # If there is an ack, send next packet
             seq = decoded['ack']
             self.inflight -= 1

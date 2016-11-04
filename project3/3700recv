@@ -77,6 +77,7 @@ if __name__=='__main__':
                 if decoded.get('ack'):
                     msg_buff[decoded['sequence']+1] = ''
                     latest_seq_in_order = decoded['sequence']+1
+                    log('[handshake] complete at SEQ#{}'.format(latest_seq_in_order))
                     continue
                 # second message of handshake
                 msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1, "adv_window": AWINDOW})
