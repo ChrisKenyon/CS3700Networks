@@ -1,0 +1,11 @@
+#!/usr/bin/env python
+import html
+import html.parse
+import parseurl
+from socket import socket, AF_INET, SOCK_STREAM
+import sys
+import xml
+
+if __name__ == '__main__':
+    sock = socket(AF_INET, SOCK_STREAM)
+    sock.connect(("http://fring.ccs.neu.edu/fakebook/", 80))
