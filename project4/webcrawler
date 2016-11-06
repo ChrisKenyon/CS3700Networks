@@ -8,6 +8,17 @@ import xml
 
 if __name__ == '__main__':
     sock = socket(AF_INET, SOCK_STREAM)
-    sock.connect(("fring.ccs.neu.edu/fakebook/", 80))
+
+    initial_request = b'GET /accounts/login/?next=/fakebook/ HTTP/1.1\nHost: fring.ccs.neu.edu 80\n\n'
+    sock.connect(("fring.ccs.neu.edu/", 80))
+
+    sock.send(initial_request)
+    data = sock.recv(10000)
+    while len(data) > 0:
+        print(data)
+        data = sock.recv(10000)
     # do stuff
+    ###### HTTP 1.1 ######
+    # GET / HTTP/1.1
+    # host: <hostname>
     sock.close()
