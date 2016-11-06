@@ -8,4 +8,6 @@ import xml
 
 if __name__ == '__main__':
     sock = socket(AF_INET, SOCK_STREAM)
-    sock.connect(("http://fring.ccs.neu.edu/fakebook/", 80))
+    sock.connect(("fring.ccs.neu.edu/fakebook/", 80))
+    # do stuff
+    sock.close()
