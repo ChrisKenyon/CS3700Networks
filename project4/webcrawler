@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
+import sys
 #import html
 #import html.parse
 #import parseurl
+
+from html.parser import HTMLParser
 from socket import socket, AF_INET, SOCK_STREAM
-#import sys
-#import xml
 
 if __name__ == '__main__':
+    username = sys.argv[1]
+    password = sys.argv[2]
     sock = socket(AF_INET, SOCK_STREAM)
 
     initial_request = b'GET /accounts/login/?next=/fakebook\nHost: fring.ccs.neu.edu 80\n\n'
     sock.connect(("fring.ccs.neu.edu", 80))
-
     sock.send(initial_request)
     data = sock.recv(10000)
-    while len(data) > 0:
-        print(data)
-        data = sock.recv(10000)
-    # do stuff
-    ###### HTTP 1.1 ######
-    # GET / HTTP/1.1
-    # host: <hostname>
+    while True:
+        init_length = len(data)
+        data += sock.recv(10000)
+        if init_length == len(data):
+            break
+    
+    parser = HTMLParser()
+    parsed = parser.feed(data.decode())
+
     sock.close()
