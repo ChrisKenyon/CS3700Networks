@@ -53,11 +53,11 @@ class WebCrawler:
             header_kv = header_regex.match(line)
             if header_kv:
                 if header_kv.group(1) not in headers:
-                    headers[header_kv.group(1)] = header_kv[2].strip()
-                elif type(headers[header_kv.group(1)]) ==
-                    headers[header_kv.group(1)].append(header_kv[2].strip())
+                    headers[header_kv.group(1)] = header_kv.group(2).strip()
+                elif type(headers[header_kv.group(1)]) == list:
+                    headers[header_kv.group(1)].append(header_kv.group(2).strip())
                 else:
-                    headers[header_kv.group(1)] = [headers[header_kv.group(1)], header_kv[2].strip()]
+                    headers[header_kv.group(1)] = [headers[header_kv.group(1)], header_kv.group(2).strip()]
 
         return headers
 
