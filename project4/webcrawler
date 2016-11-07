@@ -39,14 +39,14 @@ class WebCrawler:
 
     def GET(self,url):
         path, host = self.prep_url(url)
-        request = 'GET {} HTTP/1.1\n\
-                Host: {}\n\
-                Connection: keep-alive\n\
-                Accept: text/html,application/xhtml+xml\n\
-                User-Agent: ChrisEric/1.1\n\
-                Referer: http://{}{}\n\
-                Accept-Language: en-US\n\
-                Cookie:{}\n'.format(path,host,host,path,self.cookie)
+        request = 'GET {} HTTP/1.1\n'.format(path) + \
+        'Host: {}\n'.format(host) + \
+        'Connection: keep-alive\n' + \
+        'Accept: text/html,application/xhtml+xml\n' +
+        'User-Agent: ChrisEric/1.1\n' + \
+        'Referer: http://{}\n'.format(path) + \
+        'Accept-Language: en-US\n' + \
+        'Cookie:{}\n'.format(self.cookie)
 
         data, sock = self.request(host, request)
         for line in data.split("\n"):
