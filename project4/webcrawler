@@ -41,15 +41,8 @@ class WebCrawler:
 
     def GET(self,url):
         path, host = self.prep_url(url)
-        request = 'GET {} HTTP/1.1\n'.format(path) + \
-        'Host: {}\n'.format(host) + \
-        'Connection: keep-alive\n' + \
-        'Accept: text/html,application/xhtml+xml\n' + \
-        'User-Agent: ChrisEric/1.1\n' + \
-        'Referer: http://{}\n'.format(path) + \
-        'Accept-Language: en-US\n' + \
-        'Cookie:{}\n'.format(self.cookie)
 
+        request = 'GET /accounts/login/?next=/fakebook/ HTTP/1.1\nHost: fring.ccs.neu.edu\n\r\n'
         data, sock = self.request(host, request)
         for line in data.split("\n"):
             print(line)
