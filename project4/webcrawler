@@ -58,11 +58,6 @@ class WebCrawler:
             if init_length == len(data):
                 break
 
-        print("GET: ")
-        for line in data.splitlines():
-            print(line)
-        print("END GET")
-
         sock.close()
         return data
 
