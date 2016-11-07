@@ -31,6 +31,7 @@ class WebCrawler:
         sock = socket(AF_INET, SOCK_STREAM)
         sock.connect((host, PORT))
         sock.send(request.encode('utf-8'))
+        sock.settimeout(0.2)
         return sock.recv(BUFF).rstrip().decode(), sock
 
     def prep_url(self, url):
@@ -43,12 +44,14 @@ class WebCrawler:
     def GET(self,url):
         path, host = self.prep_url(url)
 
-        request = 'GET /accounts/login/?next=/fakebook/ HTTP/1.1\nHost: fring.ccs.neu.edu\n\r\n'
+        request = 'GET '+path+' HTTP/1.1\nHost: '+host+'\n\r\n'
         data, sock = self.request(host, request)
-        print(request)
         while True:
             init_length = len(data)
-            data += sock.recv(BUFF).decode()
+            try:
+                data += sock.recv(BUFF).decode()
+            except:
+                break
             if init_length == len(data):
                 break
 
@@ -67,8 +70,6 @@ class WebCrawler:
                 content+='&'
             content += key+'='+val
             count+=1
-        #content+='&DEBUG=True'+CRLF
-        #pdb.set_trace()
 
         msg = "POST {} HTTP/1.1\n".format(path)+\
               "Host: {}\n".format(host)+\
@@ -82,26 +83,18 @@ class WebCrawler:
               "User-Agent: ChrisEric/1.1\n"+\
               "Referer: {}\n".format(LOGIN_URL)+\
               "Accept-Language: en-US\n"+\
-              "Cookie: csrftoken={}; sessionid={}\n".format(self.token,self.session)#+\
+              "Cookie: csrftoken={}; sessionid={}\n\n".format(self.token,self.session)#+\
               #"X-CSRFToken: {}".format(self.token)+CRLF
               #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
         msg+=content+CRLF
-        print(msg)
         sock = socket(AF_INET, SOCK_STREAM)
         sock.connect((host,PORT))
         sock.send(msg.encode('utf-8'))
         data = sock.recv(BUFF).rstrip().decode()
-        print(data)
         sock.close()
 
     def fb_login(self,user,pwd):
         data = self.GET(LOGIN_URL)
-        '''
-        parse = LoginHtmlParse()
-        parse.feed(data)
-        parse.close()
-        self.token = parse.token
-        '''
         self.token = re.search("csrftoken=(.+?);",data).group(0)[10:-1]
         self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
 
@@ -113,16 +106,6 @@ class WebCrawler:
 
     def crawl(self):
         pass
-
-class LoginHtmlParse(HTMLParser):
-    def handle_starttag(self,tag,attrs):
-        if tag == 'input':
-            for attr in attrs:
-                if len(attr) > 1 and attr[1] == 'csrfmiddlewaretoken':
-                    for attr2 in attrs:
-                        if attr2[0] == 'value':
-                            self.token = attr2[1]
-                            return
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
