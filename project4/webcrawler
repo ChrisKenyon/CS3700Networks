@@ -42,7 +42,7 @@ class WebCrawler:
         request = 'GET {} HTTP/1.1\n'.format(path) + \
         'Host: {}\n'.format(host) + \
         'Connection: keep-alive\n' + \
-        'Accept: text/html,application/xhtml+xml\n' +
+        'Accept: text/html,application/xhtml+xml\n' + \
         'User-Agent: ChrisEric/1.1\n' + \
         'Referer: http://{}\n'.format(path) + \
         'Accept-Language: en-US\n' + \
@@ -71,20 +71,19 @@ class WebCrawler:
         path = '/' if not p_url.path else p_url.path
         host = p_url.netloc
 
-        msg = "POST {} HTTP/1.1\n\
-               Host: {}\n\
-               Connection: keep-alive\n\
-               Content-Length:92\n\
-               Cache-Control: max-age=0\n\
-               Accept: text/html,application/xhtml+xml\n\
-               Origin: http://{}\n\
-               Upgrade-Insecure-Requests: 1\n\
-               User-Agent: ChrisEric/1.1\n\
-               Referer: http://{}{}\n\
-               Accept-Language: en-US\n\
-               Cookie: csrftoken= {}\n\
-               X-CSRFToken: {}\n\
-              ".format(path,host,host,host,LOGIN_URL,self.token, self.token)
+        msg = "POST {} HTTP/1.1\n".format(path) + \
+        "Host: {}\n".format(host) + \
+        "Connection: keep-alive\n" + \
+        "Content-Length:92\n" + \
+        "Cache-Control: max-age=0\n" + \
+        "Accept: text/html,application/xhtml+xml\n" + \
+        "Origin: http://{}\n".format(host) + \
+        "Upgrade-Insecure-Requests: 1\n" + \
+        "User-Agent: ChrisEric/1.1\n" + \
+        "Referer: http://{}\n".format(LOGIN_URL) + \
+        "Accept-Language: en-US\n"  + \
+        "Cookie: csrftoken= {}\n".format(self.token) + \
+        "X-CSRFToken: {}\n".format(self.token)
         count = 0
         for key,val in kwargs.items():
             if count > 1:
