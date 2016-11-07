@@ -10,7 +10,7 @@ from html.parser import HTMLParser
 from socket import socket, AF_INET, SOCK_STREAM
 from urllib.parse import urlparse
 PORT = 80
-BUFF = 10000
+BUFF = 4096
 LOGIN_URL = 'http://fring.ccs.neu.edu/accounts/login/?next=/fakebook\n'
 
 ####
@@ -23,18 +23,34 @@ class WebCrawler:
     def __init__(self):
         self.cookie=""
 
-    def GET(self,url):
+    def request(self, host, request):
+        # Open socket and send request. Returns decoded response data
+        sock = socket(AF_INET, SOCK_STREAM)
+        sock.connect((host, PORT))
+        sock.send(request.encode('utf-8'))
+        return sock.recv(BUFF).rstrip().decode(), sock
+
+    def prep_url(self, url):
         p_url = urlparse(url)
         path = '/' if not p_url.path else p_url.path
         if p_url.query:
             path += '?'+p_url.query
-        host = p_url.netloc
-        request = 'GET {} HTTP/1.1\nHost: {}\nCookie:{}\r\n'.format(path,host,self.cookie)
+        return path, p_url.netloc
 
-        sock = socket(AF_INET, SOCK_STREAM)
-        sock.connect((host,PORT))
-        sock.send(request.encode('utf-8'))
-        data = sock.recv(BUFF).rstrip().decode()
+    def GET(self,url):
+        path, host = self.prep_url(url)
+        request = 'GET {} HTTP/1.1\n\
+                Host: {}\n\
+                Connection: keep-alive\n\
+                Accept: text/html,application/xhtml+xml\n\
+                User-Agent: ChrisEric/1.1\n\
+                Referer: http://{}{}\n\
+                Accept-Language: en-US\n\
+                Cookie:{}\n'.format(path,host,host,path,self.cookie)
+
+        data, sock = self.request(host, request)
+        for line in data.split("\n"):
+            print(line)
 
         while True:
             init_length = len(data)
@@ -42,8 +58,10 @@ class WebCrawler:
             if init_length == len(data):
                 break
 
-        #for line in data.splitlines():
-        #    print(line)
+        print("GET: ")
+        for line in data.splitlines():
+            print(line)
+        print("END GET")
 
         sock.close()
         return data
@@ -65,7 +83,8 @@ class WebCrawler:
                Referer: http://{}{}\n\
                Accept-Language: en-US\n\
                Cookie: csrftoken= {}\n\
-              ".format(path,host,host,host,LOGIN_URL,self.token)
+               X-CSRFToken: {}\n\
+              ".format(path,host,host,host,LOGIN_URL,self.token, self.token)
         count = 0
         for key,val in kwargs.items():
             if count > 1:
@@ -73,11 +92,8 @@ class WebCrawler:
             msg += key+'='+val+'\n'
             count+=1
 
-        sock = socket(AF_INET, SOCK_STREAM)
-        sock.connect((host,PORT))
-        sock.send(msg.encode('utf-8'))
-        data = sock.recv(BUFF).rstrip().decode()
-        print data
+        data, sock = self.request(host, msg)
+        print(data)
         sock.close()
 
     def fb_login(self,user,pwd):
