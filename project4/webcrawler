@@ -8,6 +8,64 @@ from lxml import html
 
 from html.parser import HTMLParser
 from socket import socket, AF_INET, SOCK_STREAM
+from urllib.parse import urlparse
+PORT = 80
+BUFF = 10000
+LOGIN_URL = 'http://fring.ccs.neu.edu/accounts/login/?next=/fakebook\n'
+
+####
+import pdb
+####
+
+
+class WebCrawler:
+
+    def __init__(self):
+        self.cookie=""
+
+    def GET(self,url, login = False):
+        p_url = urlparse(url)
+        path = '/' if not p_url.path else p_url.path
+        if p_url.query:
+            path += '?'+p_url.query
+        host = p_url.netloc
+        sock = socket(AF_INET, SOCK_STREAM)
+        sock.connect((host,PORT))
+        request = 'GET {} HTTP/1.1\nHost: {}\nCookie:{}\r\n'.format(path,host,self.cookie)
+        sock.send(request.encode('utf-8'))
+
+        data = sock.recv(BUFF).rstrip().decode()
+        while True:
+            init_length = len(data)
+            data += sock.recv(BUFF).decode()
+            if init_length == len(data):
+                break
+
+        for line in data.splitlines():
+            print(line)
+
+        sock.close()
+        if login:
+            parse = LoginHtmlParse()
+            parse.feed(data)
+            return parse.token
+        return self.parse_http(data)
+
+    def fb_login(self,user,pwd):
+        login = self.GET(LOGIN_URL,True)
+
+    def crawl(self):
+        pass
+
+class LoginHtmlParse(HTMLParser):
+    def handle_starttag(self,tag,attrs):
+        if tag == 'input':
+            for attr in attrs:
+                if len(attr) > 1 and attr[1] == 'csrfmiddlewaretoken':
+                    for attr2 in attrs:
+                        if attr2[0] == 'value':
+                            self.token = attr2[1]
+                            return
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
@@ -16,21 +74,10 @@ if __name__ == '__main__':
 
     username = sys.argv[1]
     password = sys.argv[2]
-    sock = socket(AF_INET, SOCK_STREAM)
 
-    initial_request = b'GET /accounts/login/?next=/fakebook\nHost: fring.ccs.neu.edu\n\n'
-    sock.connect(("fring.ccs.neu.edu", 80))
-    sock.send(initial_request)
-    data = sock.recv(10000)
-    while True:
-        init_length = len(data)
-        data += sock.recv(10000)
-        if init_length == len(data):
-            break
-    
-    for line in data.decode().split("\n"):
-        print(line)
+    crawler = WebCrawler()
+    crawler.fb_login(username,password)
+    crawler.crawl()
+
     # tree = html.fromstring(data)
     # print(tree)
-
-    sock.close()
