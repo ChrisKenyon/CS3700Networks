@@ -39,8 +39,7 @@ class WebCrawler:
             # Sometimes a double line break indicates end of header
             if newline_counter == 2:
                 break
-            # Other times, only one line break will separate headers from HTML
-            elif newline_counter == 1 and line.strip()[0] == "<":
+            if len(line.strip()) > 0 and line.strip()[0] == "<":
                 break
 
             # Parse for status code and message
@@ -50,14 +49,17 @@ class WebCrawler:
                 headers["statuscode"] = int(status.group(2))
 
             # Try and find the header key and value
-            header_kv = header_regex.match(line)
-            if header_kv:
-                if header_kv.group(1) not in headers:
-                    headers[header_kv.group(1)] = header_kv.group(2).strip()
-                elif type(headers[header_kv.group(1)]) == list:
-                    headers[header_kv.group(1)].append(header_kv.group(2).strip())
+            if header_regex.match(line):
+                # Too lazy to find a regex that will accurately extract data so just using substrings to extract header key-value pair
+                key = line[:line.index(":")]
+                value = line[line.index(":") + 1:]
+
+                if key not in headers:
+                    headers[key] = value.strip()
+                elif type(headers[key]) == list:
+                    headers[key].append(value.strip())
                 else:
-                    headers[header_kv.group(1)] = [headers[header_kv.group(1)], header_kv.group(2).strip()]
+                    headers[key] = [headers[key], value.strip()]
 
         return headers
 
