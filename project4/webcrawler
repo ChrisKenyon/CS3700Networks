@@ -9,9 +9,11 @@ from lxml import html
 from html.parser import HTMLParser
 from socket import socket, AF_INET, SOCK_STREAM
 from urllib.parse import urlparse
+import gzip
 PORT = 80
 BUFF = 10000
 LOGIN_URL = 'http://fring.ccs.neu.edu/accounts/login/?next=/fakebook\n'
+CRLF = '\r\n'
 
 ####
 import pdb
@@ -53,31 +55,37 @@ class WebCrawler:
         path = '/' if not p_url.path else p_url.path
         host = p_url.netloc
 
-        msg = "POST {} HTTP/1.1\n\
-               Host: {}\n\
-               Connection: keep-alive\n\
-               Content-Length:92\n\
-               Cache-Control: max-age=0\n\
-               Accept: text/html,application/xhtml+xml\n\
-               Origin: http://{}\n\
-               Upgrade-Insecure-Requests: 1\n\
-               User-Agent: ChrisEric/1.1\n\
-               Referer: http://{}{}\n\
-               Accept-Language: en-US\n\
-               Cookie: csrftoken= {}\n\
-              ".format(path,host,host,host,LOGIN_URL,self.token)
+        content = ''
         count = 0
         for key,val in kwargs.items():
-            if count > 1:
-                msg+='&'
-            msg += key+'='+val+'\n'
+            if count > 0:
+                content+='&'
+            content += key+'='+val
             count+=1
+        content+='&DEBUG=True'+CRLF
 
+        msg = "POST {} HTTP/1.1".format(path)+CRLF+\
+              "Host: {}".format(host)+CRLF+\
+              "Connection: keep-alive"+CRLF+\
+              "Content-Length: {}".format(str(len(content)))+CRLF+\
+              "Content-Type: application/x-www-form-urlencoded"+CRLF+\
+              "Cache-Control: max-age=0"+CRLF+\
+              "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"+CRLF+\
+              "Origin: http://{}".format(host)+CRLF+\
+              "Upgrade-Insecure-Requests: 1"+CRLF+\
+              "User-Agent: ChrisEric/1.1"+CRLF+\
+              "Referer: {}".format(LOGIN_URL)+CRLF+\
+              "Accept-Language: en-US"+CRLF+\
+              "Cookie: csrftoken={}".format(self.token)+CRLF#+\
+              #"X-CSRFToken: {}".format(self.token)+CRLF
+              #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
+        msg+=content
+        print(msg)
         sock = socket(AF_INET, SOCK_STREAM)
         sock.connect((host,PORT))
         sock.send(msg.encode('utf-8'))
         data = sock.recv(BUFF).rstrip().decode()
-        print data
+        print(data)
         sock.close()
 
     def fb_login(self,user,pwd):
