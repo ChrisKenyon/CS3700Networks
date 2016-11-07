@@ -10,9 +10,10 @@ from html.parser import HTMLParser
 from socket import socket, AF_INET, SOCK_STREAM
 from urllib.parse import urlparse
 import gzip
+import re
 PORT = 80
-BUFF = 10000
-LOGIN_URL = 'http://fring.ccs.neu.edu/accounts/login/?next=/fakebook\n'
+BUFF = 4096
+LOGIN_URL = 'http://fring.ccs.neu.edu/accounts/login/?next=/fakebook/'
 CRLF = '\r\n'
 
 ####
@@ -25,27 +26,31 @@ class WebCrawler:
     def __init__(self):
         self.cookie=""
 
-    def GET(self,url):
+    def request(self, host, request):
+        # Open socket and send request. Returns decoded response data
+        sock = socket(AF_INET, SOCK_STREAM)
+        sock.connect((host, PORT))
+        sock.send(request.encode('utf-8'))
+        return sock.recv(BUFF).rstrip().decode(), sock
+
+    def prep_url(self, url):
         p_url = urlparse(url)
         path = '/' if not p_url.path else p_url.path
         if p_url.query:
             path += '?'+p_url.query
-        host = p_url.netloc
-        request = 'GET {} HTTP/1.1\nHost: {}\nCookie:{}\r\n'.format(path,host,self.cookie)
+        return path, p_url.netloc
 
-        sock = socket(AF_INET, SOCK_STREAM)
-        sock.connect((host,PORT))
-        sock.send(request.encode('utf-8'))
-        data = sock.recv(BUFF).rstrip().decode()
+    def GET(self,url):
+        path, host = self.prep_url(url)
 
+        request = 'GET /accounts/login/?next=/fakebook/ HTTP/1.1\nHost: fring.ccs.neu.edu\n\r\n'
+        data, sock = self.request(host, request)
+        print(request)
         while True:
             init_length = len(data)
             data += sock.recv(BUFF).decode()
             if init_length == len(data):
                 break
-
-        #for line in data.splitlines():
-        #    print(line)
 
         sock.close()
         return data
@@ -62,24 +67,25 @@ class WebCrawler:
                 content+='&'
             content += key+'='+val
             count+=1
-        content+='&DEBUG=True'+CRLF
+        #content+='&DEBUG=True'+CRLF
+        #pdb.set_trace()
 
-        msg = "POST {} HTTP/1.1".format(path)+CRLF+\
-              "Host: {}".format(host)+CRLF+\
-              "Connection: keep-alive"+CRLF+\
-              "Content-Length: {}".format(str(len(content)))+CRLF+\
-              "Content-Type: application/x-www-form-urlencoded"+CRLF+\
-              "Cache-Control: max-age=0"+CRLF+\
-              "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"+CRLF+\
-              "Origin: http://{}".format(host)+CRLF+\
-              "Upgrade-Insecure-Requests: 1"+CRLF+\
-              "User-Agent: ChrisEric/1.1"+CRLF+\
-              "Referer: {}".format(LOGIN_URL)+CRLF+\
-              "Accept-Language: en-US"+CRLF+\
-              "Cookie: csrftoken={}".format(self.token)+CRLF#+\
+        msg = "POST {} HTTP/1.1\n".format(path)+\
+              "Host: {}\n".format(host)+\
+              "Connection: keep-alive\n"+\
+              "Content-Length: {}\n".format(str(len(content)))+\
+              "Content-Type: application/x-www-form-urlencoded\n"+\
+              "Cache-Control: max-age=0\n"+\
+              "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\n"+\
+              "Origin: http://{}\n".format(host)+\
+              "Upgrade-Insecure-Requests: 1\n"+\
+              "User-Agent: ChrisEric/1.1\n"+\
+              "Referer: {}\n".format(LOGIN_URL)+\
+              "Accept-Language: en-US\n"+\
+              "Cookie: csrftoken={}; sessionid={}\n".format(self.token,self.session)#+\
               #"X-CSRFToken: {}".format(self.token)+CRLF
               #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
-        msg+=content
+        msg+=content+CRLF
         print(msg)
         sock = socket(AF_INET, SOCK_STREAM)
         sock.connect((host,PORT))
@@ -90,10 +96,15 @@ class WebCrawler:
 
     def fb_login(self,user,pwd):
         data = self.GET(LOGIN_URL)
+        '''
         parse = LoginHtmlParse()
         parse.feed(data)
         parse.close()
         self.token = parse.token
+        '''
+        self.token = re.search("csrftoken=(.+?);",data).group(0)[10:-1]
+        self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
+
         self.POST(LOGIN_URL,
                   username=user,
                   password=pwd,
