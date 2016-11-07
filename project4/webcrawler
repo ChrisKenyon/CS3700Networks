@@ -24,7 +24,8 @@ import pdb
 class WebCrawler:
 
     def __init__(self):
-        self.cookie=""
+        self.token=''
+        self.session=''
 
     def request(self, host, request):
         # Open socket and send request. Returns decoded response data
@@ -44,7 +45,17 @@ class WebCrawler:
     def GET(self,url):
         path, host = self.prep_url(url)
 
-        request = 'GET '+path+' HTTP/1.1\nHost: '+host+'\n\r\n'
+        request = 'GET '+path+' HTTP/1.1\nHost: '+host
+        if self.token and self.session:
+            request+='\nConnection: keep-alive\n'+\
+                       'Cookie: csrftoken={}; sessionid={}\n'.format(self.token,self.session)+\
+                       'Cache-Control: max-age=0\n'+\
+                       'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\n'+\
+                       'User-Agent: ChrisEric/1.1\n'+\
+                       'Upgrade-Insecure-Requests: 1\n'+\
+                       'Accept-Language: en-US,en;q=0.8\n'#+\
+                       #'Accept-Encoding: gzip, deflate, sdch'+\
+        request+='\n\r\n'
         data, sock = self.request(host, request)
         while True:
             init_length = len(data)
@@ -92,19 +103,26 @@ class WebCrawler:
         sock.send(msg.encode('utf-8'))
         data = sock.recv(BUFF).rstrip().decode()
         sock.close()
+        return data
 
     def fb_login(self,user,pwd):
         data = self.GET(LOGIN_URL)
         self.token = re.search("csrftoken=(.+?);",data).group(0)[10:-1]
         self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
 
-        self.POST(LOGIN_URL,
+        ret = self.POST(LOGIN_URL,
                   username=user,
                   password=pwd,
                   next='%2Ffakebook%2F',
                   csrfmiddlewaretoken=self.token)
+        #self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
+        redirect = re.search('Location: (.+?)\r',ret).group(0)[10:-1]
+        self.main_page = self.GET(redirect)
 
     def crawl(self):
+        pdb.set_trace()
+        print(self.main_page)
+
         pass
 
 if __name__ == '__main__':
