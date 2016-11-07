@@ -24,7 +24,8 @@ import pdb
 class WebCrawler:
 
     def __init__(self):
-        self.cookie=""
+        self.token=''
+        self.session=''
 
     def parse_headers(self, data):
         # Scans data and parses headers. Returns headers in dict format. (Includes status and status code)
@@ -80,14 +81,24 @@ class WebCrawler:
     def GET(self,url):
         path, host = self.prep_url(url)
 
-        request = 'GET /accounts/login/?next=/fakebook/ HTTP/1.1\nHost: fring.ccs.neu.edu\n\r\n'
+        request = 'GET '+path+' HTTP/1.1\nHost: '+host
+        if self.token and self.session:
+            request+='\nConnection: keep-alive\n'+\
+                       'Cookie: csrftoken={}; sessionid={}\n'.format(self.token,self.session)+\
+                       'Cache-Control: max-age=0\n'+\
+                       'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\n'+\
+                       'User-Agent: ChrisEric/1.1\n'+\
+                       'Upgrade-Insecure-Requests: 1\n'+\
+                       'Accept-Language: en-US,en;q=0.8\n'#+\
+                       #'Accept-Encoding: gzip, deflate, sdch'+\
+        request+='\n\r\n'
         data, sock = self.request(host, request)
-        # for line in data.split("\n"):
-        #     print(line)
-
         while True:
             init_length = len(data)
-            data += sock.recv(BUFF).decode()
+            try:
+                data += sock.recv(BUFF).decode()
+            except:
+                break
             if init_length == len(data):
                 break
 
@@ -107,8 +118,6 @@ class WebCrawler:
                 content+='&'
             content += key+'='+val
             count+=1
-        #content+='&DEBUG=True'+CRLF
-        #pdb.set_trace()
 
         msg = "POST {} HTTP/1.1\n".format(path)+\
               "Host: {}\n".format(host)+\
@@ -122,7 +131,7 @@ class WebCrawler:
               "User-Agent: ChrisEric/1.1\n"+\
               "Referer: {}\n".format(LOGIN_URL)+\
               "Accept-Language: en-US\n"+\
-              "Cookie: csrftoken={}; sessionid={}\n".format(self.token,self.session)#+\
+              "Cookie: csrftoken={}; sessionid={}\n\n".format(self.token,self.session)#+\
               #"X-CSRFToken: {}".format(self.token)+CRLF
               #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
         msg+=content+CRLF
@@ -135,38 +144,23 @@ class WebCrawler:
 
     def fb_login(self,user,pwd):
         headers, data = self.GET(LOGIN_URL)
-        print("GET headers: ")
-        print(headers)
-
-        '''
-        parse = LoginHtmlParse()
-        parse.feed(data)
-        parse.close()
-        self.token = parse.token
-        '''
         self.token = re.search("csrftoken=(.+?);",data).group(0)[10:-1]
         self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
 
-        headers, data = self.POST(LOGIN_URL,
-                                    username=user,
-                                    password=pwd,
-                                    next='%2Ffakebook%2F',
-                                    csrfmiddlewaretoken=self.token)
-        print("POST headers:")
-        print(headers)
+        headers, postdata = self.POST(LOGIN_URL,
+                  username=user,
+                  password=pwd,
+                  next='%2Ffakebook%2F',
+                  csrfmiddlewaretoken=self.token)
+        #self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
+        redirect = re.search('Location: (.+?)\r',postdata).group(0)[10:-1]
+        self.main_page = self.GET(redirect)
 
     def crawl(self):
-        pass
+        pdb.set_trace()
+        print(self.main_page)
 
-class LoginHtmlParse(HTMLParser):
-    def handle_starttag(self,tag,attrs):
-        if tag == 'input':
-            for attr in attrs:
-                if len(attr) > 1 and attr[1] == 'csrfmiddlewaretoken':
-                    for attr2 in attrs:
-                        if attr2[0] == 'value':
-                            self.token = attr2[1]
-                            return
+        pass
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
