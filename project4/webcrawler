@@ -23,36 +23,74 @@ class WebCrawler:
     def __init__(self):
         self.cookie=""
 
-    def GET(self,url, login = False):
+    def GET(self,url):
         p_url = urlparse(url)
         path = '/' if not p_url.path else p_url.path
         if p_url.query:
             path += '?'+p_url.query
         host = p_url.netloc
+        request = 'GET {} HTTP/1.1\nHost: {}\nCookie:{}\r\n'.format(path,host,self.cookie)
+
         sock = socket(AF_INET, SOCK_STREAM)
         sock.connect((host,PORT))
-        request = 'GET {} HTTP/1.1\nHost: {}\nCookie:{}\r\n'.format(path,host,self.cookie)
         sock.send(request.encode('utf-8'))
-
         data = sock.recv(BUFF).rstrip().decode()
+
         while True:
             init_length = len(data)
             data += sock.recv(BUFF).decode()
             if init_length == len(data):
                 break
 
-        for line in data.splitlines():
-            print(line)
+        #for line in data.splitlines():
+        #    print(line)
 
         sock.close()
-        if login:
-            parse = LoginHtmlParse()
-            parse.feed(data)
-            return parse.token
-        return self.parse_http(data)
+        return data
+
+    def POST(self,url, **kwargs):
+        p_url = urlparse(url)
+        path = '/' if not p_url.path else p_url.path
+        host = p_url.netloc
+
+        msg = "POST {} HTTP/1.1\n\
+               Host: {}\n\
+               Connection: keep-alive\n\
+               Content-Length:92\n\
+               Cache-Control: max-age=0\n\
+               Accept: text/html,application/xhtml+xml\n\
+               Origin: http://{}\n\
+               Upgrade-Insecure-Requests: 1\n\
+               User-Agent: ChrisEric/1.1\n\
+               Referer: http://{}{}\n\
+               Accept-Language: en-US\n\
+               Cookie: csrftoken= {}\n\
+              ".format(path,host,host,host,LOGIN_URL,self.token)
+        count = 0
+        for key,val in kwargs.items():
+            if count > 1:
+                msg+='&'
+            msg += key+'='+val+'\n'
+            count+=1
+
+        sock = socket(AF_INET, SOCK_STREAM)
+        sock.connect((host,PORT))
+        sock.send(msg.encode('utf-8'))
+        data = sock.recv(BUFF).rstrip().decode()
+        print data
+        sock.close()
 
     def fb_login(self,user,pwd):
-        login = self.GET(LOGIN_URL,True)
+        data = self.GET(LOGIN_URL)
+        parse = LoginHtmlParse()
+        parse.feed(data)
+        parse.close()
+        self.token = parse.token
+        self.POST(LOGIN_URL,
+                  username=user,
+                  password=pwd,
+                  next='%2Ffakebook%2F',
+                  csrfmiddlewaretoken=self.token)
 
     def crawl(self):
         pass
