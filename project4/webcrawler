@@ -4,15 +4,21 @@ import sys
 #import html.parse
 #import parseurl
 
+from lxml import html
+
 from html.parser import HTMLParser
 from socket import socket, AF_INET, SOCK_STREAM
 
 if __name__ == '__main__':
+    if len(sys.argv) < 3:
+        print("username and password required: ./webcrawl <username> <password>")
+        sys.exit()
+
     username = sys.argv[1]
     password = sys.argv[2]
     sock = socket(AF_INET, SOCK_STREAM)
 
-    initial_request = b'GET /accounts/login/?next=/fakebook\nHost: fring.ccs.neu.edu 80\n\n'
+    initial_request = b'GET /accounts/login/?next=/fakebook\nHost: fring.ccs.neu.edu\n\n'
     sock.connect(("fring.ccs.neu.edu", 80))
     sock.send(initial_request)
     data = sock.recv(10000)
@@ -22,7 +28,9 @@ if __name__ == '__main__':
         if init_length == len(data):
             break
     
-    parser = HTMLParser()
-    parsed = parser.feed(data.decode())
+    for line in data.decode().split("\n"):
+        print(line)
+    # tree = html.fromstring(data)
+    # print(tree)
 
     sock.close()
