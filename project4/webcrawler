@@ -24,14 +24,16 @@ import pdb
 class WebCrawler:
 
     def __init__(self):
+        self.cookie = {}
         self.token=''
         self.session=''
 
     def parse_headers(self, data):
         # Scans data and parses headers. Returns headers in dict format. (Includes status and status code)
-        headers = {}
+        headers = {"Set-Cookie": []}
         newline_counter = 0
         header_regex = re.compile("(.+):(.+)")
+        setcookie_regex = re.compile("(\w+)=(\w+);(.+)")
         status_regex = re.compile("(HTTP\/1\.1) +?(\d+)(.+)")
         for line in data.split("\n"):
             if line.strip() == "\n":
@@ -40,6 +42,7 @@ class WebCrawler:
             # Sometimes a double line break indicates end of header
             if newline_counter == 2:
                 break
+            # Break at first line of HTML
             if len(line.strip()) > 0 and line.strip()[0] == "<":
                 break
 
@@ -61,6 +64,15 @@ class WebCrawler:
                     headers[key].append(value.strip())
                 else:
                     headers[key] = [headers[key], value.strip()]
+
+                # Process Set-Cookie headers
+
+            for header in headers["Set-Cookie"]:
+                cookie_extraction = setcookie_regex.match(header)
+                self.cookie[cookie_extraction.group(1)] = cookie_extraction.group(2)
+
+            print("COOKIE:")
+            print(self.cookie)
 
         return headers
 
@@ -84,7 +96,8 @@ class WebCrawler:
         request = 'GET '+path+' HTTP/1.1\nHost: '+host
         if self.token and self.session:
             request+='\nConnection: keep-alive\n'+\
-                       'Cookie: csrftoken={}; sessionid={}\n'.format(self.token,self.session)+\
+                    #    'Cookie: csrftoken={}; sessionid={}\n'.format(self.token,self.session)+\
+                       'Cookie: {}'.format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
                        'Cache-Control: max-age=0\n'+\
                        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\n'+\
                        'User-Agent: ChrisEric/1.1\n'+\
@@ -131,11 +144,14 @@ class WebCrawler:
               "User-Agent: ChrisEric/1.1\n"+\
               "Referer: {}\n".format(LOGIN_URL)+\
               "Accept-Language: en-US\n"+\
-              "Cookie: csrftoken={}; sessionid={}\n\n".format(self.token,self.session)#+\
+              "Cookie: {}".format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
+            #   "Cookie: csrftoken={}; sessionid={}\n\n".format(self.token,self.session)#+\
               #"X-CSRFToken: {}".format(self.token)+CRLF
               #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
         msg+=content+CRLF
 
+        print("POST msg: ")
+        print(msg)
         data, sock = self.request(host, msg)
         sock.close()
         headers = self.parse_headers(data)
@@ -144,9 +160,6 @@ class WebCrawler:
 
     def fb_login(self,user,pwd):
         headers, data = self.GET(LOGIN_URL)
-        self.token = re.search("csrftoken=(.+?);",data).group(0)[10:-1]
-        self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
-
         headers, postdata = self.POST(LOGIN_URL,
                   username=user,
                   password=pwd,
