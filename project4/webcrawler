@@ -14,7 +14,9 @@ import re
 from queue import Queue, Full, Empty
 PORT = 80
 BUFF = 4096
-LOGIN_URL = 'http://fring.ccs.neu.edu/accounts/login/?next=/fakebook/'
+BASE_URL = 'http://fring.ccs.neu.edu/'
+PROFILE_URL = BASE_URL+'fakebook/'
+LOGIN_URL = BASE_URL+'accounts/login/?next=/fakebook/'
 CRLF = '\r\n'
 
 ####
@@ -175,22 +177,46 @@ class WebCrawler:
                   csrfmiddlewaretoken=self.token)
         print("POST RESPONSE")
         print(postdata)
+        # TODO handling redirects should be built into GET for the 301 and 302 response codes rather than here
         self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
     def get_initial_ids(self, html):
         return [link.group(2) for link in re.finditer('(href="/fakebook/(\d+?)/")+',html)]
 
+    def search_for_flag(self, html_data):
+        search = re.search('secret_flag.*FLAG:(\d+?)</h3>',html_data)
+        if search:
+            pdb.set_trace()
+            self.secret_flags.append(search.groups(1))
+
+    def search_and_update(self, id):
+        friend_url = PROFILE_URL+'{}/'.format(id)
+        # get friend's page
+        headers, html_data = self.GET(friend_url)
+        # TODO handle headers, 200 is good to go
+        self.search_for_flag(html_data)
+
+        #TODO go to friend_url/friends/{} and add to queue
+
+
     def crawl(self):
-        #pdb.set_trace()
         print("MAIN PAGE: ")
         print(self.main_page)
 
-        pdb.set_trace()
-        bfs_queue = Queue()
+        self.bfs_queue = Queue()
+        self.secret_flags = []
+        self.visited = {}
+        # get my friend ids
         initial_ids = self.get_initial_ids(self.main_page[1])
         for id in initial_ids:
-            bfs_queue.put(id,block=True)
-        pass
+            self.bfs_queue.put(id,block=True)
+            self.visited[id]=1
+        while (len(self.secret_flags)<5):
+            try:
+                next_id = self.bfs_queue.get(block=True,timeout=0.5)
+                self.search_and_update(next_id)
+            except Empty:
+                pass
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
