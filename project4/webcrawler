@@ -11,6 +11,7 @@ from socket import socket, AF_INET, SOCK_STREAM
 from urllib.parse import urlparse
 import gzip
 import re
+from queue import Queue, Full, Empty
 PORT = 80
 BUFF = 4096
 LOGIN_URL = 'http://fring.ccs.neu.edu/accounts/login/?next=/fakebook/'
@@ -112,6 +113,7 @@ class WebCrawler:
                        #'Accept-Encoding: gzip, deflate, sdch'+\
         request+='\n\r\n'
         data, sock = self.request(host, request)
+        sock.settimeout(0.2)
         while True:
             init_length = len(data)
             try:
@@ -175,11 +177,19 @@ class WebCrawler:
         print(postdata)
         self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
+    def get_initial_ids(self, html):
+        return [link.group(2) for link in re.finditer('(href="/fakebook/(\d+?)/")+',html)]
+
     def crawl(self):
         #pdb.set_trace()
         print("MAIN PAGE: ")
         print(self.main_page)
 
+        pdb.set_trace()
+        bfs_queue = Queue()
+        initial_ids = self.get_initial_ids(self.main_page[1])
+        for id in initial_ids:
+            bfs_queue.put(id,block=True)
         pass
 
 if __name__ == '__main__':
