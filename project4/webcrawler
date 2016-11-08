@@ -28,6 +28,12 @@ class WebCrawler:
         self.token=''
         self.session=''
 
+    def handle_redirect(self, headers):
+        # Handle 301 and 302 code redirects
+        if headers.get("Location"):
+            return self.GET(headers["Location"])
+        return headers, None
+
     def parse_headers(self, data):
         # Scans data and parses headers. Returns headers in dict format. (Includes status and status code)
         headers = {"Set-Cookie": []}
@@ -67,12 +73,9 @@ class WebCrawler:
 
                 # Process Set-Cookie headers
 
-            for header in headers["Set-Cookie"]:
-                cookie_extraction = setcookie_regex.match(header)
-                self.cookie[cookie_extraction.group(1)] = cookie_extraction.group(2)
-
-            print("COOKIE:")
-            print(self.cookie)
+        for header in headers["Set-Cookie"]:
+            cookie_extraction = setcookie_regex.match(header)
+            self.cookie[cookie_extraction.group(1)] = cookie_extraction.group(2)
 
         return headers
 
@@ -150,7 +153,6 @@ class WebCrawler:
               #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
         msg+=content+CRLF
 
-        print("POST msg: ")
         print(msg)
         data, sock = self.request(host, msg)
         sock.close()
@@ -160,14 +162,12 @@ class WebCrawler:
 
     def fb_login(self,user,pwd):
         headers, data = self.GET(LOGIN_URL)
-        headers, postdata = self.POST(LOGIN_URL,
+        postheaders, postdata = self.POST(LOGIN_URL,
                   username=user,
                   password=pwd,
                   next='%2Ffakebook%2F',
                   csrfmiddlewaretoken=self.token)
-        #self.session = re.search("sessionid=(.+?);",data).group(0)[10:-1]
-        redirect = re.search('Location: (.+?)\r',postdata).group(0)[10:-1]
-        self.main_page = self.GET(redirect)
+        self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else ""
 
     def crawl(self):
         pdb.set_trace()
