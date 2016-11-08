@@ -76,6 +76,10 @@ class WebCrawler:
         for header in headers["Set-Cookie"]:
             cookie_extraction = setcookie_regex.match(header)
             self.cookie[cookie_extraction.group(1)] = cookie_extraction.group(2)
+            if cookie_extraction.group(1) == "csrftoken":
+                self.token = cookie_extraction.group(2)
+            if cookie_extraction.group(1) == "sessionid":
+                self.session = cookie_extraction.group(2)
 
         return headers
 
@@ -129,10 +133,14 @@ class WebCrawler:
         content = ''
         count = 0
         for key,val in kwargs.items():
+            # if count > 0:
+            #     content+='&'
+            # content += key+'='+val
+            # count+=1
             if count > 0:
-                content+='&'
-            content += key+'='+val
-            count+=1
+                content += ';'
+            content += "{}: {}".format(key, value)
+            count += 1
 
         msg = "POST {} HTTP/1.1\n".format(path)+\
               "Host: {}\n".format(host)+\
@@ -166,7 +174,7 @@ class WebCrawler:
                   password=pwd,
                   next='%2Ffakebook%2F',
                   csrfmiddlewaretoken=self.token)
-        self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else ""
+        self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
     def crawl(self):
         pdb.set_trace()
