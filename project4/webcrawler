@@ -76,6 +76,10 @@ class WebCrawler:
         for header in headers["Set-Cookie"]:
             cookie_extraction = setcookie_regex.match(header)
             self.cookie[cookie_extraction.group(1)] = cookie_extraction.group(2)
+            if cookie_extraction.group(1) == "csrftoken":
+                self.token = cookie_extraction.group(2)
+            if cookie_extraction.group(1) == "sessionid":
+                self.session = cookie_extraction.group(2)
 
         return headers
 
@@ -129,10 +133,14 @@ class WebCrawler:
         content = ''
         count = 0
         for key,val in kwargs.items():
+            # if count > 0:
+            #     content+='&'
+            # content += key+'='+val
+            # count+=1
             if count > 0:
-                content+='&'
-            content += key+'='+val
-            count+=1
+                content += ';'
+            content += "{}={}".format(key, val)
+            count += 1
 
         msg = "POST {} HTTP/1.1\n".format(path)+\
               "Host: {}\n".format(host)+\
@@ -146,10 +154,7 @@ class WebCrawler:
               "User-Agent: ChrisEric/1.1\n"+\
               "Referer: {}\n".format(LOGIN_URL)+\
               "Accept-Language: en-US\n"+\
-              "Cookie: {}".format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
-            #   "Cookie: csrftoken={}; sessionid={}\n\n".format(self.token,self.session)#+\
-              #"X-CSRFToken: {}".format(self.token)+CRLF
-              #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
+              "Cookie: {}\n\n".format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
         msg+=content+CRLF
 
         print(msg)
@@ -166,10 +171,13 @@ class WebCrawler:
                   password=pwd,
                   next='%2Ffakebook%2F',
                   csrfmiddlewaretoken=self.token)
-        self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else ""
+        print("POST RESPONSE")
+        print(postdata)
+        self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
     def crawl(self):
-        pdb.set_trace()
+        #pdb.set_trace()
+        print("MAIN PAGE: ")
         print(self.main_page)
 
         pass
