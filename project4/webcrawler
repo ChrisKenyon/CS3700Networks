@@ -161,7 +161,7 @@ class WebCrawler:
               "Cookie: {}\n\n".format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
         msg+=content+CRLF
 
-        print(msg)
+        #print(msg)
         data, sock = self.request(host, msg)
         sock.close()
         headers = self.parse_headers(data)
@@ -175,8 +175,8 @@ class WebCrawler:
                   password=pwd,
                   next='%2Ffakebook%2F',
                   csrfmiddlewaretoken=self.token)
-        print("POST RESPONSE")
-        print(postdata)
+        #print("POST RESPONSE")
+        #print(postdata)
         # TODO handling redirects should be built into GET for the 301 and 302 response codes rather than here
         self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
@@ -187,10 +187,9 @@ class WebCrawler:
                 self.visited[id]=1
 
     def search_for_flag(self, html_data):
-        search = re.search('secret_flag.*FLAG:(\d+?)</h3>',html_data)
+        search = re.findall('secret_flag.+FLAG: ([a-zA-Z0-9]{64})',html_data)
         if search:
-            pdb.set_trace()
-            self.secret_flags.append(search.groups(1))
+            self.secret_flags.append(search[0])
 
     def load_friends(self, url):
         headers, friends_html = self.GET(url+'friends/1/')
@@ -218,8 +217,8 @@ class WebCrawler:
 
 
     def crawl(self):
-        print("MAIN PAGE: ")
-        print(self.main_page)
+        #print("MAIN PAGE: ")
+        #print(self.main_page)
 
         self.bfs_queue = Queue()
         self.secret_flags = []
@@ -228,10 +227,12 @@ class WebCrawler:
         self.queue_ids(self.main_page[1])
         while (len(self.secret_flags)<5):
             try:
-                next_id = self.bfs_queue.get(block=True,timeout=0.5)
+                next_id = self.bfs_queue.get(block=True,timeout=0.05)
                 self.search_and_update(next_id)
             except Empty:
                 pass
+        for flag in self.secret_flags:
+            print(flag)
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
@@ -244,6 +245,3 @@ if __name__ == '__main__':
     crawler = WebCrawler()
     crawler.fb_login(username,password)
     crawler.crawl()
-
-    # tree = html.fromstring(data)
-    # print(tree)
