@@ -154,11 +154,7 @@ class WebCrawler:
               "User-Agent: ChrisEric/1.1\n"+\
               "Referer: {}\n".format(LOGIN_URL)+\
               "Accept-Language: en-US\n"+\
-              "X-CSRFToken: {}\n".format(self.token)+\
               "Cookie: {}\n\n".format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
-            #   "Cookie: csrftoken={}; sessionid={}\n\n".format(self.token,self.session)#+\
-              #"X-CSRFToken: {}".format(self.token)+CRLF
-              #"Accept-Encoding: gzip, deflate"+CRLF+\ TODO it will send encoded data if we let it
         msg+=content+CRLF
 
         print(msg)
@@ -181,6 +177,7 @@ class WebCrawler:
 
     def crawl(self):
         #pdb.set_trace()
+        print("MAIN PAGE: ")
         print(self.main_page)
 
         pass
