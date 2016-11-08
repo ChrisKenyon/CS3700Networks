@@ -180,14 +180,31 @@ class WebCrawler:
         # TODO handling redirects should be built into GET for the 301 and 302 response codes rather than here
         self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
-    def get_initial_ids(self, html):
-        return [link.group(2) for link in re.finditer('(href="/fakebook/(\d+?)/")+',html)]
+    def queue_ids(self, html):
+       for id in [link.group(2) for link in re.finditer('(href="/fakebook/(\d+?)/")+',html)]:
+            if id not in self.visited:
+                self.bfs_queue.put(id,block=True)
+                self.visited[id]=1
 
     def search_for_flag(self, html_data):
         search = re.search('secret_flag.*FLAG:(\d+?)</h3>',html_data)
         if search:
             pdb.set_trace()
             self.secret_flags.append(search.groups(1))
+
+    def load_friends(self, url):
+        headers, friends_html = self.GET(url+'friends/1/')
+        # TODO handle headers
+
+        # handle first page of friends
+        self.queue_ids(friends_html)
+
+        page_re = re.findall('Page 1 of \d',friends_html)
+        number_pages = int(page_re[0][10:]) if page_re else 1
+        for i in range(2,number_pages):
+            headers, next_html = self.GET(url+'friends/{}/'.format(i))
+            # TODO handle headers
+            self.queue_ids(next_html)
 
     def search_and_update(self, id):
         friend_url = PROFILE_URL+'{}/'.format(id)
@@ -197,6 +214,7 @@ class WebCrawler:
         self.search_for_flag(html_data)
 
         #TODO go to friend_url/friends/{} and add to queue
+        self.load_friends(friend_url)
 
 
     def crawl(self):
@@ -207,10 +225,7 @@ class WebCrawler:
         self.secret_flags = []
         self.visited = {}
         # get my friend ids
-        initial_ids = self.get_initial_ids(self.main_page[1])
-        for id in initial_ids:
-            self.bfs_queue.put(id,block=True)
-            self.visited[id]=1
+        self.queue_ids(self.main_page[1])
         while (len(self.secret_flags)<5):
             try:
                 next_id = self.bfs_queue.get(block=True,timeout=0.5)
