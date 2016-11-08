@@ -139,7 +139,7 @@ class WebCrawler:
             # count+=1
             if count > 0:
                 content += ';'
-            content += "{}: {}".format(key, value)
+            content += "{}={}".format(key, val)
             count += 1
 
         msg = "POST {} HTTP/1.1\n".format(path)+\
