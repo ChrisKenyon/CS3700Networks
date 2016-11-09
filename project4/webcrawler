@@ -33,10 +33,13 @@ class WebCrawler:
         self.token=''
         self.session=''
 
-    def handle_redirect(self, headers):
+    def handle_status(self, url, headers):
         # Handle 301 and 302 code redirects
-        if headers.get("Location"):
+        if headers.get("statuscode") in [301, 302] and headers.get("Location"):
             return self.GET(headers["Location"])
+        # Handle 500
+        if headers.get("statuscode") == 500:
+            return self.GET(url)
         return headers, None
 
     def parse_headers(self, data):
@@ -129,6 +132,11 @@ class WebCrawler:
 
         sock.close()
         headers = self.parse_headers(data)
+        tries = 10 # Loop breaker
+        while headers.get("statuscode") != 200 and tries > 0:
+            headers, newdata = self.handle_status(url, headers)
+            data = newdata if newdata else data #handle_status will return data None if status not supported
+            tries -= 1
         return headers, data
 
     def POST(self,url, **kwargs):
@@ -167,6 +175,11 @@ class WebCrawler:
         data, sock = self.request(host, msg)
         sock.close()
         headers = self.parse_headers(data)
+        if headers.get("statuscode") in [301, 302]:
+            headers, data = self.GET(headers.get("Location"))
+        if headers.get("statuscode") not in [200, 301, 302]:
+            print("POST ERROR: {}".format(headers.get("status")))
+            sys.exit()
 
         return headers, data
 
@@ -180,7 +193,7 @@ class WebCrawler:
         #print("POST RESPONSE")
         #print(postdata)
         # TODO handling redirects should be built into GET for the 301 and 302 response codes rather than here
-        self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
+        # self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
     def queue_ids(self, html):
        for id in [link.group(2) for link in re.finditer('(href="/fakebook/(\d+?)/")+',html)]:
