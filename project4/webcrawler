@@ -20,12 +20,6 @@ PROFILE_URL = BASE_URL+'fakebook/'
 LOGIN_URL = BASE_URL+'accounts/login/?next=/fakebook/'
 CRLF = '\r\n'
 
-MAX_THREADS = 80
-####
-import pdb
-####
-
-
 class WebCrawler:
 
     def __init__(self):
@@ -120,7 +114,7 @@ class WebCrawler:
                        #'Accept-Encoding: gzip, deflate, sdch'+\
         request+='\n\r\n'
         data, sock = self.request(host, request)
-        sock.settimeout(0.2)
+        sock.settimeout(0.02)
         while True:
             init_length = len(data)
             try:
@@ -239,9 +233,10 @@ class WebCrawler:
         # get my friend ids
         self.queue_ids(self.main_page[1])
         while (len(self.secret_flags)<5):
-            if threading.activeCount() < MAX_THREADS:
+            try:
                 threading.Thread(target=self.search_next).start()
-            else:
+                continue
+            except:
                 self.search_next()
         for flag in self.secret_flags:
             print(flag)
