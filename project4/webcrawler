@@ -171,7 +171,6 @@ class WebCrawler:
               "Cookie: {}\n\n".format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
         msg+=content+CRLF
 
-        #print(msg)
         data, sock = self.request(host, msg)
         sock.close()
         headers = self.parse_headers(data)
@@ -185,15 +184,11 @@ class WebCrawler:
 
     def fb_login(self,user,pwd):
         headers, data = self.GET(LOGIN_URL)
-        postheaders, postdata = self.POST(LOGIN_URL,
+        self.main_page = self.POST(LOGIN_URL,
                   username=user,
                   password=pwd,
                   next='%2Ffakebook%2F',
                   csrfmiddlewaretoken=self.token)
-        #print("POST RESPONSE")
-        #print(postdata)
-        # TODO handling redirects should be built into GET for the 301 and 302 response codes rather than here
-        # self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
     def queue_ids(self, html):
        for id in [link.group(2) for link in re.finditer('(href="/fakebook/(\d+?)/")+',html)]:
@@ -238,9 +233,6 @@ class WebCrawler:
             pass
 
     def crawl(self):
-        #print("MAIN PAGE: ")
-        #print(self.main_page)
-
         self.bfs_queue = Queue()
         self.secret_flags = []
         self.visited = {}
