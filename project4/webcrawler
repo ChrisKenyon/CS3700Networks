@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import gzip
 import re
 from queue import Queue, Full, Empty
+import threading
 PORT = 80
 BUFF = 4096
 BASE_URL = 'http://fring.ccs.neu.edu/'
@@ -19,6 +20,7 @@ PROFILE_URL = BASE_URL+'fakebook/'
 LOGIN_URL = BASE_URL+'accounts/login/?next=/fakebook/'
 CRLF = '\r\n'
 
+MAX_THREADS = 80
 ####
 import pdb
 ####
@@ -215,6 +217,12 @@ class WebCrawler:
         #TODO go to friend_url/friends/{} and add to queue
         self.load_friends(friend_url)
 
+    def search_next(self):
+        try:
+            next_id = self.bfs_queue.get(block=True,timeout=0.05)
+            self.search_and_update(next_id)
+        except Empty:
+            pass
 
     def crawl(self):
         #print("MAIN PAGE: ")
@@ -226,11 +234,10 @@ class WebCrawler:
         # get my friend ids
         self.queue_ids(self.main_page[1])
         while (len(self.secret_flags)<5):
-            try:
-                next_id = self.bfs_queue.get(block=True,timeout=0.05)
-                self.search_and_update(next_id)
-            except Empty:
-                pass
+            if threading.activeCount() < MAX_THREADS:
+                threading.Thread(target=self.search_next).start()
+            else:
+                self.search_next()
         for flag in self.secret_flags:
             print(flag)
 
