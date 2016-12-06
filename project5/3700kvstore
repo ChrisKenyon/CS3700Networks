@@ -253,7 +253,7 @@ class Server:
 def main():
     # Your ID number = sys.argv[1]
     # The ID numbers of all the other replicas = sys.argv[2:]
-    server = Server(sys.argv[1], sys.ar gv[2:])
+    server = Server(sys.argv[1], sys.argv[2:])
     server.start()
 
 if __name__=="__main__":
