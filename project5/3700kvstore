@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import math
+import threading
 import sys, socket, select, time, json, random
 
 STATES = ['FOLLOWER','CANDIDATE','LEADER']
@@ -13,14 +14,15 @@ class Server:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         self.sock.connect(my_id)
         # control clock
-        self.current_time = time.time()
+        self.last_timeout_time = time.time()
         # Current state. Default to follower
         self.current_state = STATES[0]
 
         ##### Election ######
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
-        self.election_timeout = random.randrange(150, 300) * 0.001
+        # TODO self.election_timeout = random.randrange(150, 300) * 0.001
+        self.election_timeout = random.randrange(15, 30) * 0.1 # TODO FOR DEBUG - lets make it 1.5 to 3 seconds
         self.votes_received = []
 
         ##### Persistent States #####
@@ -56,11 +58,15 @@ class Server:
         if print_msg:
             print(print_msg)
         if update_clock:
-            self.current_time = time.time()
+            self.kick_clock()
+
+    def kick_clock(self):
+        self.last_timeout_time = time.time()
+        # TODO self.election_timeout = random.randrange(150, 300) * 0.001
+        self.election_timeout = random.randrange(15, 30) * 0.1 # TODO FOR DEBUG - lets make it 1.5 to 3 seconds
 
     def start(self):
-        TIMEOUT = 2
-        last = time.time()
+        threading.Thread(target=self.timeout_thread).start()
         while True:
             ready = select.select([self.sock], [], [], 0.1)[0]
             if self.sock in ready:
@@ -68,9 +74,10 @@ class Server:
                 if len(msg_raw) == 0: continue
                 self.handle_message(msg_raw)
 
-            # THread this elsewhere
+    def timeout_thread(self):
+        while True:
             clock = time.time()
-            if clock-self.current_time > self.election_timeout:
+            if clock-self.last_timeout_time > self.election_timeout:
                 # Election timeout timed out
 
                 self.current_term += 1
@@ -186,7 +193,7 @@ class Server:
             self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
 
         # Update from heartbeat
-        self.current_time = time.time()
+        self.kick_clock()
 
         #4
         # TODO handle when multiple entries behind
@@ -285,7 +292,6 @@ class Server:
         Handler
                 '''
     def handle_message(self,message):
-
         switch_case = {'append_entries_rpc':self.handle_append_entries_rpc,
                         'request_vote_rpc':self.handle_request_vote_rpc,
                         'vote':self.handle_vote,
