@@ -1,47 +1,222 @@
 #!/usr/bin/env python
 import sys, socket, select, time, json, random
 
+class Server:
+    def __init__(self,my_id,replicas):
+        self.my_id = my_id
+        self.replica_ids = replicas
+        # Connect to the network. All messages to/from other replicas and clients will
+        # occur over this socket
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        self.sock.connect(my_id)
 
+        ##### Persistent States #####
+        # Current term that this node thinks it is (default 0)
+        self.current_term = 0
+        # Candidate that received this term's vote
+        self.voted_for = None
+        # log entries - contains collections of command for state machine, term when received
+        self.log = []
+
+        ##### Volatile States #####
+        # highest known log entry committed (default 0)
+        self.commit_index = 0
+        # index of highest log entry commited in log[]
+        self.last_applied = 0
+
+        ##### Volatile Leader States #####
+        # index of the next log entry to send to each server (default: leader's last log index + 1)
+        self.next_indexes = []
+        # index of the highest log entry known replicated on a server for each server (default 0)
+        self.match_indexes = []
+
+    def start(self):
+        TIMEOUT = 2
+        last = 0
+        while True:
+            ready = select.select([self.sock], [], [], 0.1)[0]
+            if self.sock in ready:
+                msg_raw = self.sock.recv(32768)
+                if len(msg_raw) == 0: continue
+                self.handle_message(msg_raw)
+
+            # ALL THIS HERE IS JUST SOME BULLSHIT CODE FROM THE STARTER SAMPLE:
+            clock = time.time()
+            if clock-last > TIMEOUT:
+                # Send a no-op message to a random peer every two seconds, just for fun
+                # You definitely want to remove this from your implementation
+                msg = {'src': self.my_id, 'dst': random.choice(self.replica_ids), 'leader': 'FFFF', 'type': 'noop'}
+                self.sock.send(json.dumps(msg))
+                print '%s sending a NOOP to %s' % (msg['src'], msg['dst'])
+                last = clock
+
+
+    '''
+        Rule Set
+    '''
+
+    STATES = ['FOLLOWER','CANDIDATE','LEADER']
+    current_state = STATES[1]
+
+    ##### All #####
+    '''
+    If commit_index > last_applied: increment last_applied, apply
+        log[last_applied] to state machine
+    If RPC request or response contains term T > current_term:
+        set current_term = T, convert to follower
+    '''
+    ##### Followers #####
+    '''
+    Respond to RPCs from candidates and leaders
+    If election timeout elapses without receiving append_entries
+        RPC from current leader or granting vote to candidate:
+        convert to candidate
+    '''
+    ##### Candidates #####
+    '''
+    On conversion to candidate, start election:
+    Increment current_term
+    Vote for self
+    Reset election timer
+    Send request_vote_rpc to all other servers
+    If votes received from majority of servers: become leader
+    If append_entries RPC received from new leader: convert to
+        follower
+    If election timeout elapses: start new election
+    '''
+    ##### Leaders #####
+    '''
+    Upon election: send initial empty append_entries_rpc
+        (heartbeat) to each server; repeat during idle periods to
+        prevent election timeouts
+    If command received from client: append entry to local log,
+        respond after entry applied to state machine
+    If last log index >= next_index for a follower: send
+        append_entries RPC with log entries starting at next_index
+    If successful: update next_index and match_index for
+        follower
+    If append_entries fails because of log inconsistency:
+        decrement next_index and retry
+    If there exists an N such that N > commit_index, a majority
+        of match_index[i] >= N, and log[N].term == current_term:
+        set commit_index = N
+    '''
+
+
+    '''
+        Append Entries RPC
+    '''
+    def append_entries_rpc(self,
+                           server, # (the server to send to)
+                           term, leader_id, prev_log_idx,
+                           prev_log_term, entries, leader_commit):
+        message = {'src':0,'dest':0,'type':'request_vote_rpc', # TODO fill in src and dest
+                   'leader_id':leader_id,
+                   'prev_log_idx':prev_log_idx,
+                   'prev_log_term':prev_log_term,
+                   'entries':entries,
+                   'leader_commit':leader_commit}
+
+        msg = json.dumps(message)
+        # TODO send to server
+        term, success = (0,False) # send call and decode receive message
+
+    def handle_append_entries_rpc(self,message):
+        '''
+        1. Reply false if term < current_term
+        2. Reply false if log doesn't contain an entry at prev_log_index
+        whose term matches prev_log_term
+        3. If an existing entry conflicts with a new one (same index
+        but different terms), delete the existing entry and all that
+        follow it
+        4. Append any new entries not already in the log
+        5. If leader_commit > commit_index, set commit_index =
+        min(leader_commit, index of last new entry)
+        '''
+        msg_dict = json.loads(message)
+        term = msg_dict.get('term')
+        leader_id = msg_dict.get('leader_id')
+        prev_log_idx = msg_dict.get('prev_log_idx')
+        prev_log_term = msg_dict.get('prev_log_term')
+        entries = msg_dict.get('entries')
+        leader_commit = msg_dict.get('leader_commit')
+
+
+        return current_term, True #TODO send as message
+
+
+    '''
+        Request Vote RPC
+    '''
+
+    def request_vote_rpc(self,
+                         server,
+                         term, candidate_id, last_log_index, last_log_term):
+        message = {'src':self.my_id,'dest':0,'type':'request_vote_rpc', # TODO fill in dest
+                   'term':term,
+                   'candidate_id':candidate_id,
+                   'last_log_index':last_log_index,
+                   'last_log_term':last_log_term}
+
+        msg = json.dumps(message)
+        # TODO send to server
+        term, vote_granted = (0,False) # send call and decode receive message
+
+    def handle_request_vote_rpc(self,msg_dict):
+        '''
+        1. Reply false if term < current_term
+        2. If votedFor is null or candidate_id, and candidate's log is at
+        least as up-to-date as receiver's log, grant vote
+        '''
+
+        term = msg_dict.get('term')
+        candidate_id = msg_dict.get('candidate_id')
+        last_log_index = msg_dict.get('last_log_index')
+        last_log_term = msg_dict.get('last_log_term')
+
+        return current_term, False #TODO send as message
+
+    '''
+        CLIENT-RELATED
+    '''
+
+    data = []
+
+    def handle_put(self,msg_dict):
+        pass
+
+    def handle_get(self,msg_dict):
+        pass
+
+    '''
+        Handler
+                '''
+    def handle_message(self,message):
+
+        switch_case = {'append_entries_rpc_response':self.handle_append_entries_rpc,
+                        'handle_request_vote_rpc':self.handle_request_vote_rpc,
+                        'put':self.handle_put,
+                        'get':self.handle_get,}
+        msg_dict = json.loads(message)
+        # Handle noop messages. This may be removed from your final implementation
+        if msg_dict['type'] == 'noop':
+            print '%s received a NOOP from %s' % (msg_dict['dst'], msg_dict['src'])
+        else:
+            switch_case[msg_dict.get('type')](msg_dict)
+
+
+
+    '''
+    MAIN
+    '''
 
 def main():
     # Your ID number
     my_id = sys.argv[1]
-
     # The ID numbers of all the other replicas
     replica_ids = sys.argv[2:]
-
-    # Connect to the network. All messages to/from other replicas and clients will
-    # occur over this socket
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-    sock.connect(my_id)
-    TIMEOUT = 2
-    last = 0
-
-    while True:
-        ready = select.select([sock], [], [], 0.1)[0]
-
-        if sock in ready:
-            msg_raw = sock.recv(32768)
-
-            if len(msg_raw) == 0: continue
-            msg = json.loads(msg_raw)
-
-            # For now, ignore get() and put() from clients
-            if msg['type'] in ['get', 'put']:
-                            pass
-
-            # Handle noop messages. This may be removed from your final implementation
-            elif msg['type'] == 'noop':
-                print '%s received a NOOP from %s' % (msg['dst'], msg['src'])
-
-        clock = time.time()
-        if clock-last > TIMEOUT:
-            # Send a no-op message to a random peer every two seconds, just for fun
-            # You definitely want to remove this from your implementation
-            msg = {'src': my_id, 'dst': random.choice(replica_ids), 'leader': 'FFFF', 'type': 'noop'}
-            sock.send(json.dumps(msg))
-            print '%s sending a NOOP to %s' % (msg['src'], msg['dst'])
-            last = clock
+    server = Server(my_id, replica_ids)
+    server.start()
 
 if __name__=="__main__":
     main()
