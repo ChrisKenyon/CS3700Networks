@@ -29,8 +29,9 @@ class Server:
         # Candidate that received this term's vote
         self.voted_for = None
         # log entries - contains collections of command for state machine, term when received
-        # 1-indexed
-        self.log = []
+        # 1-indexed.   Format: (term, {MID:{key:value}})
+        # this format is tentative, but should work as just data considering we only get and put, no delete and etc.
+        self.log = [(1,None)]
 
         ##### Volatile States #####
         # highest known log entry committed (default 0)
@@ -45,7 +46,12 @@ class Server:
         # index of the highest log entry known replicated on a server for each server (default 0)
         self.match_indexes = []
 
+        # the data to store after commiting
+        self.data = {}
+        self.leader = self.my_id
+
     def send_message(self, msg_dict, print_msg=None, update_clock=True):
+        msg_dict.update({'leader':self.leader})
         self.sock.send(json.dumps(msg_dict))
         if print_msg:
             print(print_msg)
@@ -80,7 +86,7 @@ class Server:
                 if len(self.votes_received) >= math.floor(len(self.replica_ids) / 2) + 1:
                     self.state = STATES[2]
                     # TODO: thread append_entries_rpc across all other replicas
-                    self.append_entries_rpc(self.current_term, self.my_id, self.last_log_index, self.last_log_term, [], self.commit_index)
+                    self.append_entries_rpc(self.current_term, self.my_id, len(self.log), self.log[-1][0], [], self.commit_index)
 
     '''
         Rule Set
@@ -136,8 +142,8 @@ class Server:
     '''
     def append_entries_rpc(self,
                            term, leader_id, prev_log_idx,
-                           prev_log_term, entries, leader_commit, dest='FFFF'):
-        message = {'src':0,'dest':dest,'type':'request_vote_rpc', # TODO fill in src and dest
+                           prev_log_term, entries, leader_commit, dst='FFFF'):
+        message = {'src':0,'dst':dst,'type':'request_vote_rpc', # TODO fill in src and dst
                    'leader_id':leader_id,
                    'prev_log_idx':prev_log_idx,
                    'prev_log_term':prev_log_term,
@@ -176,11 +182,11 @@ class Server:
         Request Vote RPC
     '''
 
-    def request_vote_rpc(self, term, candidate_id, last_log_index, last_log_term, dest='FFFF'):
+    def request_vote_rpc(self, term, candidate_id, last_log_index, last_log_term, dst='FFFF'):
         # TODO: RequestVote RPCs should be sent in parallel to all other replicas. Is multicast too expensive vs
         # threading request_vote_rpc?
         message = {'src':self.my_id,
-                    'dest':dest,
+                    'dst':dst,
                     'type':'request_vote_rpc',
                     'term':term,
                     'candidate_id':candidate_id,
@@ -191,7 +197,7 @@ class Server:
         msg_raw = self.sock.recv(32768)
         msg_dict = json.loads(msg_raw)
         if msg_dict.get('voteGranted'):
-            self.votes_received.append(msg_dict['id'])
+            self.votes_received.append(msg_dict.get('src'))
         return (msg_dict.get('term'), msg_dict.get('voteGranted')) == (term, True)
 
     def handle_request_vote_rpc(self,msg_dict):
@@ -205,10 +211,15 @@ class Server:
         candidate_id = msg_dict.get('candidate_id')
         last_log_index = msg_dict.get('last_log_index')
         last_log_term = msg_dict.get('last_log_term')
+        dst = msg_dict.get('src')
 
-        message = {'id': self.my_id, 'term': max(term, self.current_term), 'voteGranted': False}
+        message = {'src': self.my_id,
+                   'dst': dst,
+                   'type': 'vote',
+                   'term': max(term, self.current_term), # TODO is this how it should be?
+                   'voteGranted': False}
 
-        if term >= self.current_term and last_log_index >= self.last_log_index and last_log_term >= self.last_log_term:
+        if term >= self.current_term and last_log_index >= len(self.log) and last_log_term >= self.log[-1][0]:
             message.update({"voteGranted": True})
             self.send_message(message,'{} cast vote for {}'.format(self.my_id, candidate_id))
             return
@@ -216,16 +227,27 @@ class Server:
         self.send_message(message, '{} denied vote to {}'.format(self.my_id, candidate_id))
         return
 
+    def vote(self):
+        pass
+
+    def handle_vote(self,msg_dict):
+        pass
+
     '''
         CLIENT-RELATED
     '''
 
-    data = []
 
     def handle_put(self,msg_dict):
+        print("Put received: "+str(msg_dict))
+        # TODO add to log
+        # TODO respond with ok or fail
         pass
 
     def handle_get(self,msg_dict):
+        print("Get received: "+str(msg_dict))
+        # TODO return from self.data
+        # TODO respond with ok or fail
         pass
 
     '''
@@ -233,16 +255,18 @@ class Server:
                 '''
     def handle_message(self,message):
 
-        switch_case = {'append_entries_rpc_response':self.handle_append_entries_rpc,
-                        'handle_request_vote_rpc':self.handle_request_vote_rpc,
+        switch_case = {'append_entries_rpc':self.handle_append_entries_rpc,
+                        'request_vote_rpc':self.handle_request_vote_rpc,
+                        'vote':self.handle_vote,
                         'put':self.handle_put,
                         'get':self.handle_get,}
         msg_dict = json.loads(message)
-        # Handle noop messages. This may be removed from your final implementation
-        if msg_dict['type'] == 'noop':
-            print '%s received a NOOP from %s' % (msg_dict['dst'], msg_dict['src'])
-        else:
-            switch_case[msg_dict.get('type')](msg_dict)
+        if msg_dict.get('dst') in (self.my_id, 'FFFF'):
+            # Handle noop messages. This may be removed from your final implementation
+            if msg_dict['type'] == 'noop':
+                print '%s received a NOOP from %s' % (msg_dict['dst'], msg_dict['src'])
+            else:
+                switch_case[msg_dict.get('type')](msg_dict)
 
 
 
@@ -252,7 +276,7 @@ class Server:
 
 def main():
     # Your ID number = sys.argv[1]
-    # The ID numbers of all the other replicas = sys.argv[2:]
+    # The ID numbers of all th,""other replicas = sys.argv[2:]
     server = Server(sys.argv[1], sys.argv[2:])
     server.start()
 
