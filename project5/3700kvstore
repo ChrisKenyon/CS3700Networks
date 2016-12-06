@@ -1,5 +1,8 @@
 #!/usr/bin/env python
+import math
 import sys, socket, select, time, json, random
+
+STATES = ['FOLLOWER','CANDIDATE','LEADER']
 
 class Server:
     def __init__(self,my_id,replicas):
@@ -9,6 +12,16 @@ class Server:
         # occur over this socket
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         self.sock.connect(my_id)
+        # control clock
+        self.current_time = time.time()
+        # Current state. Default to follower
+        self.current_state = STATES[0]
+
+        ##### Election ######
+        # Election timeout. Begin election.
+        # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
+        self.election_timeout = random.randrange(150, 300) * 0.001
+        self.votes_received = []
 
         ##### Persistent States #####
         # Current term that this node thinks it is (default 0)
@@ -16,6 +29,7 @@ class Server:
         # Candidate that received this term's vote
         self.voted_for = None
         # log entries - contains collections of command for state machine, term when received
+        # 1-indexed
         self.log = []
 
         ##### Volatile States #####
@@ -23,6 +37,7 @@ class Server:
         self.commit_index = 0
         # index of highest log entry commited in log[]
         self.last_applied = 0
+        #
 
         ##### Volatile Leader States #####
         # index of the next log entry to send to each server (default: leader's last log index + 1)
@@ -30,9 +45,16 @@ class Server:
         # index of the highest log entry known replicated on a server for each server (default 0)
         self.match_indexes = []
 
+    def send_message(self, msg_dict, print_msg=None, update_clock=True):
+        self.sock.send(json.dumps(msg_dict))
+        if print_msg:
+            print(print_msg)
+        if update_clock:
+            self.current_time = time.time()
+
     def start(self):
         TIMEOUT = 2
-        last = 0
+        last = time.time()
         while True:
             ready = select.select([self.sock], [], [], 0.1)[0]
             if self.sock in ready:
@@ -42,21 +64,27 @@ class Server:
 
             # ALL THIS HERE IS JUST SOME BULLSHIT CODE FROM THE STARTER SAMPLE:
             clock = time.time()
-            if clock-last > TIMEOUT:
+            if clock-self.current_time > TIMEOUT:
                 # Send a no-op message to a random peer every two seconds, just for fun
                 # You definitely want to remove this from your implementation
                 msg = {'src': self.my_id, 'dst': random.choice(self.replica_ids), 'leader': 'FFFF', 'type': 'noop'}
-                self.sock.send(json.dumps(msg))
-                print '%s sending a NOOP to %s' % (msg['src'], msg['dst'])
-                last = clock
-
+                self.send_message(msg, '%s sending a NOOP to %s' % (msg['src'], msg['dst']))
+            # Election timeout timed out
+            elif clock-self.current_time > self.election_timeout:
+                self.current_term += 1
+                self.current_state = STATES[1]
+                #TODO: determine structure of log entries. Currently assuming entry's term # is at index 0
+                #TODO: thread request_vote_rpc across all other replicas
+                self.request_vote_rpc(self.current_term, self.my_id, len(self.log), self.log[-1][0])
+                # Just became leader
+                if len(self.votes_received) >= math.floor(len(self.replica_ids) / 2) + 1:
+                    self.state = STATES[2]
+                    # TODO: thread append_entries_rpc across all other replicas
+                    self.append_entries_rpc(self.current_term, self.my_id, self.last_log_index, self.last_log_term, [], self.commit_index)
 
     '''
         Rule Set
     '''
-
-    STATES = ['FOLLOWER','CANDIDATE','LEADER']
-    current_state = STATES[1]
 
     ##### All #####
     '''
@@ -107,10 +135,9 @@ class Server:
         Append Entries RPC
     '''
     def append_entries_rpc(self,
-                           server, # (the server to send to)
                            term, leader_id, prev_log_idx,
-                           prev_log_term, entries, leader_commit):
-        message = {'src':0,'dest':0,'type':'request_vote_rpc', # TODO fill in src and dest
+                           prev_log_term, entries, leader_commit, dest='FFFF'):
+        message = {'src':0,'dest':dest,'type':'request_vote_rpc', # TODO fill in src and dest
                    'leader_id':leader_id,
                    'prev_log_idx':prev_log_idx,
                    'prev_log_term':prev_log_term,
@@ -149,18 +176,23 @@ class Server:
         Request Vote RPC
     '''
 
-    def request_vote_rpc(self,
-                         server,
-                         term, candidate_id, last_log_index, last_log_term):
-        message = {'src':self.my_id,'dest':0,'type':'request_vote_rpc', # TODO fill in dest
-                   'term':term,
-                   'candidate_id':candidate_id,
-                   'last_log_index':last_log_index,
-                   'last_log_term':last_log_term}
-
-        msg = json.dumps(message)
-        # TODO send to server
-        term, vote_granted = (0,False) # send call and decode receive message
+    def request_vote_rpc(self, term, candidate_id, last_log_index, last_log_term, dest='FFFF'):
+        # TODO: RequestVote RPCs should be sent in parallel to all other replicas. Is multicast too expensive vs
+        # threading request_vote_rpc?
+        message = {'src':self.my_id,
+                    'dest':dest,
+                    'type':'request_vote_rpc',
+                    'term':term,
+                    'candidate_id':candidate_id,
+                    'last_log_index':last_log_index,
+                    'last_log_term':last_log_term}
+        self.votedFor = self.my_id
+        self.send_message(message, '{} requesting vote RPC'.format(self.my_id))
+        msg_raw = self.sock.recv(32768)
+        msg_dict = json.loads(msg_raw)
+        if msg_dict.get('voteGranted'):
+            self.votes_received.append(msg_dict['id'])
+        return (msg_dict.get('term'), msg_dict.get('voteGranted')) == (term, True)
 
     def handle_request_vote_rpc(self,msg_dict):
         '''
@@ -174,7 +206,15 @@ class Server:
         last_log_index = msg_dict.get('last_log_index')
         last_log_term = msg_dict.get('last_log_term')
 
-        return current_term, False #TODO send as message
+        message = {'id': self.my_id, 'term': max(term, self.current_term), 'voteGranted': False}
+
+        if term >= self.current_term and last_log_index >= self.last_log_index and last_log_term >= self.last_log_term:
+            message.update({"voteGranted": True})
+            self.send_message(message,'{} cast vote for {}'.format(self.my_id, candidate_id))
+            return
+
+        self.send_message(message, '{} denied vote to {}'.format(self.my_id, candidate_id))
+        return
 
     '''
         CLIENT-RELATED
@@ -211,11 +251,9 @@ class Server:
     '''
 
 def main():
-    # Your ID number
-    my_id = sys.argv[1]
-    # The ID numbers of all the other replicas
-    replica_ids = sys.argv[2:]
-    server = Server(my_id, replica_ids)
+    # Your ID number = sys.argv[1]
+    # The ID numbers of all the other replicas = sys.argv[2:]
+    server = Server(sys.argv[1], sys.ar gv[2:])
     server.start()
 
 if __name__=="__main__":
