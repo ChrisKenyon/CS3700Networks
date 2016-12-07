@@ -22,7 +22,8 @@ class Server:
         ##### Election ######
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
-        self.election_timeout = random.randrange(150, 300) * 0.001
+        self.election_timeout = random.randrange(150,300) * 0.01
+        self.elect_lock = threading.Lock()
         self.votes_received = []
         self.voted_this_term = False
 
@@ -59,12 +60,12 @@ class Server:
         msg_dict.update({'leader':self.leader})
         msg_dict.update({'src':self.my_id})
         if self.DEBUG:
-            print("SENDING FROM {}: ".format(self.my_id) + str(msg_dict))
+            print("{}: Sending: {}".format(self.my_id,str(msg_dict)))
         self.sock.send(json.dumps(msg_dict))
 
     def kick_clock(self):
         self.last_timeout_time = time.time()
-        self.election_timeout = random.randrange(150, 300) * 0.001
+        self.election_timeout = random.randrange(150, 300) * 0.01
 
     def start(self):
         threading.Thread(target=self.timeout_thread).start()
@@ -80,7 +81,7 @@ class Server:
             clock = time.time()
             if self.is_leader():
                 # heartbeats
-                if clock-self.last_timeout_time > self.election_timeout / 3: #TODO address this hardcoded 3, the idea is that heart beats should be much faster than election timeout
+                if clock-self.last_timeout_time > self.election_timeout / 10: #TODO address this hardcoded 3, the idea is that heart beats should be much faster than election timeout
                     # TODO make this where any put requests are sent from. The leader should probably have a request buffer sent rather than just this empty list
                     self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
                     self.kick_clock()
@@ -240,7 +241,7 @@ class Server:
                     'term':term,
                     'last_log_index':last_log_index,
                     'last_log_term':last_log_term}
-        self.send_message(message, '{} requesting vote RPC'.format(self.my_id))
+        self.send_message(message)#, '{} requesting vote RPC'.format(self.my_id))
 
     def handle_request_vote_rpc(self,msg_dict):
         '''
@@ -261,16 +262,17 @@ class Server:
         self.vote(grant, dst, dst, term)
 
     def vote(self, grant, dst, candidate_id, term):
+        grant = grant and not self.voted_this_term
         message = {'dst': dst,
                    'type': 'vote',
                    'term': term, # No spec on this. I think it makes sense for the vote to include the requested term (to indicate requestor and receiver are talking about the same term)
                    'voteGranted': grant}
-        if grant and not self.voted_this_term:
-            self.send_message(message,'{} cast vote for {}'.format(self.my_id, candidate_id))
+        if grant:
+            self.send_message(message)#,'{} cast vote for {}'.format(self.my_id, candidate_id))
             self.switch_to_follower()
             self.voted_this_term = True
         else:
-            self.send_message(message, '{} denied vote to {}'.format(self.my_id, candidate_id))
+            self.send_message(message)#, '{} denied vote to {}'.format(self.my_id, candidate_id))
 
     def handle_vote(self,msg_dict):
         if self.is_candidate():
@@ -372,6 +374,8 @@ class Server:
                        'vote':self.handle_vote,
                        'put':self.handle_put,
                        'get':self.handle_get,}
+        if self.DEBUG:
+            print("{}: Received message: {}".format(self.my_id,message))
         msg_dict = json.loads(message)
         if msg_dict.get('dst') in (self.my_id, 'FFFF'):
             switch_case[msg_dict.get('type')](msg_dict)
