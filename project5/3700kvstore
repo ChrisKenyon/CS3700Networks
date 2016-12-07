@@ -53,7 +53,7 @@ class Server:
 
         # the data to store after commiting
         self.data = {}
-        self.leader = 'FFFF'
+        self.leader = '9999' # TODO this is an indicator for now to say there's no leader at start
 
     def send_message(self, msg_dict, print_msg=None):
         if self.DEBUG and print_msg:
@@ -198,8 +198,8 @@ class Server:
 
         # Case where current replica is in candidate mode and receives RPC from legitimate leader
         # Case where self is candidate and RPC term < current_term is covered in next if statement
-        if self.state == STATES[1] and term >= self.current_term:
-            self.state = STATES[0]
+        if self.current_state == STATES[1] and term >= self.current_term:
+            self.current_state = STATES[0]
             self.votes_received = []
             self.voted_this_term = False
 
@@ -225,6 +225,8 @@ class Server:
             if leader_commit > self.commit_index:
                 self.commit_index = min(leader_commit, self.prev_log_index)
                 # TODO commit data here???
+                # TODO We only want to do this is we have a quorum, but lets just do it for now for simple cases
+                self.data[new_entry.get(new_mid).keys()[0]]=new_entry.get(new_mid).values()[0]
 
         return_msg['success'] = True
         self.send_message(return_msg)
@@ -316,7 +318,7 @@ class Server:
         if self.current_state == STATES[2]:
             mid = msg_dict.get('MID')
             key = msg_dict.get('key')
-            val = msg_dict.get('val')
+            val = msg_dict.get('value')
             new_entry = (self.current_term,{mid:{key:val}})
             self.log.append(new_entry)
             self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [new_entry], self.commit_index)
@@ -324,7 +326,13 @@ class Server:
                            'type':'ok',
                            'MID': mid}
             self.send_message(ok_msg_dict)
-            # TODO respond with fail if necessary?
+        elif self.leader == '9999':
+            # fail
+            mid = msg_dict.get('MID')
+            fail_msg_dict = {'dst':msg_dict.get('src'),
+                           'type':'fail',
+                           'MID': mid}
+            self.send_message(fail_msg_dict)
         else:
             self.redirect(msg_dict)
 
@@ -332,19 +340,18 @@ class Server:
         if self.DEBUG:
             print("Get received: "+str(msg_dict))
         mid = msg_dict.get('MID')
-        if self.current_state == STATES[2]:
-            key = msg_dict.get('key')
-            if key in self.data:
-                ok_msg_dict = {'dst':msg_dict.get('src'),
-                               'type':'ok',
-                               'MID': mid,
-                               'value':self.data[key]}
-                self.send_message(ok_msg_dict)
-                return
-        fail_msg_dict = {'dst':msg_dict.get('src'),
-                         'type':'fail',
-                         'MID': mid}
-        self.send_message(fail_msg_dict)
+        key = msg_dict.get('key')
+        if key in self.data:
+            ok_msg_dict = {'dst':msg_dict.get('src'),
+                           'type':'ok',
+                           'MID': mid,
+                           'value':self.data[key]}
+            self.send_message(ok_msg_dict)
+        else:
+            fail_msg_dict = {'dst':msg_dict.get('src'),
+                             'type':'fail',
+                             'MID': mid}
+            self.send_message(fail_msg_dict)
 
     '''
         Handler
