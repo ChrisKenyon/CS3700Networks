@@ -3,12 +3,10 @@ import math
 import threading
 import sys, socket, select, time, json, random
 
-STATES = ['FOLLOWER','CANDIDATE','LEADER']
-
 class Server:
     def __init__(self,my_id,replicas):
 
-        self.DEBUG = False
+        self.DEBUG = True
 
         self.my_id = my_id
         self.replica_ids = replicas
@@ -19,7 +17,7 @@ class Server:
         # control clock
         self.last_timeout_time = time.time()
         # Current state. Default to follower
-        self.current_state = STATES[0]
+        self.switch_to_follower()
 
         ##### Election ######
         # Election timeout. Begin election.
@@ -80,9 +78,9 @@ class Server:
     def timeout_thread(self):
         while True:
             clock = time.time()
-            if self.current_state == STATES[2]:
+            if self.is_leader():
                 # heartbeats
-                if clock-self.last_timeout_time > self.election_timeout / 3:
+                if clock-self.last_timeout_time > self.election_timeout / 3: #TODO address this hardcoded 3, the idea is that heart beats should be much faster than election timeout
                     # TODO make this where any put requests are sent from. The leader should probably have a request buffer sent rather than just this empty list
                     self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
                     self.kick_clock()
@@ -90,11 +88,7 @@ class Server:
             elif clock-self.last_timeout_time > self.election_timeout:
                 # Election timeout timed out. Start election campaign
                 # This should be the only place current term is incremented, and only updated in handle vote rpc
-                self.current_term += 1
-                self.current_state = STATES[1]
-                self.votedFor = self.my_id
-                self.voted_this_term = True
-                self.votes_received = []
+                self.switch_to_candidate()
                 for replica in self.replica_ids:
                     threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
                 self.kick_clock()
@@ -199,10 +193,8 @@ class Server:
 
         # Case where current replica is in candidate mode and receives RPC from legitimate leader
         # Case where self is candidate and RPC term < current_term is covered in next if statement
-        if self.current_state == STATES[1] and term >= self.current_term:
-            self.current_state = STATES[0]
-            self.votes_received = []
-            self.voted_this_term = False
+        if self.is_candidate() and term >= self.current_term:
+            self.switch_to_follower()
 
         # Terminating cases
         if (term < self.current_term) or (self.log[prev_log_idx][0] != prev_log_term): #1 & 2
@@ -234,7 +226,7 @@ class Server:
 
     def handle_append_rpc_response(self, msg_dict):
         # TODO get quorum from replicas on entry appends
-        if self.current_state == STATES[2]:
+        if self.is_leader():
             # TODO take care of leader duties
             pass
 
@@ -260,7 +252,6 @@ class Server:
         last_log_index = msg_dict.get('last_log_index')
         last_log_term = msg_dict.get('last_log_term')
         dst = msg_dict.get('src')
-        self.votes_received = []
 
         grant = term >= self.current_term and last_log_index >= len(self.log) and last_log_term >= self.log[-1][0]
         if term > self.current_term:
@@ -275,24 +266,48 @@ class Server:
                    'term': term, # No spec on this. I think it makes sense for the vote to include the requested term (to indicate requestor and receiver are talking about the same term)
                    'voteGranted': grant}
         if grant and not self.voted_this_term:
-            self.kick_clock()
             self.send_message(message,'{} cast vote for {}'.format(self.my_id, candidate_id))
+            self.switch_to_follower()
             self.voted_this_term = True
-            self.current_state = STATES[0]
         else:
             self.send_message(message, '{} denied vote to {}'.format(self.my_id, candidate_id))
 
     def handle_vote(self,msg_dict):
-        if msg_dict.get('voteGranted'):
-            self.votes_received.append(msg_dict.get('src'))
-        if len(self.votes_received) > math.floor(len(self.replica_ids) / 2):
-            if self.DEBUG:
-                print("{}: IM THE LEADER!".format(self.my_id))
-            self.leader = self.my_id
-            self.current_state = STATES[2]
-            self.votes_received = []
-            for replica in self.replica_ids:
-                threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index), kwargs={"dst": replica}).start()
+        if self.is_candidate():
+            if msg_dict.get('voteGranted'):
+                self.votes_received.append(msg_dict.get('src'))
+            if len(self.votes_received) > math.floor(len(self.replica_ids) / 2):
+                if self.DEBUG:
+                    print("{}: IM THE LEADER!".format(self.my_id))
+                self.switch_to_leader()
+                for replica in self.replica_ids:
+                    threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index), kwargs={"dst": replica}).start()
+
+    def switch_to_candidate(self):
+        self.current_state = "CANDIDATE"
+        self.current_term += 1
+        self.votes_received = [self.my_id]
+        self.votedFor = self.my_id
+        self.voted_this_term = True
+
+    def is_candidate(self):
+        return self.current_state == "CANDIDATE"
+
+    def switch_to_follower(self):
+        self.current_state = "FOLLOWER"
+        self.voted_this_term = False
+        self.votes_received = []
+        self.kick_clock()
+
+    def is_follower(self):
+        return self.current_state == "FOLLOWER"
+
+    def switch_to_leader(self):
+        self.leader = self.my_id
+        self.current_state = "LEADER"
+
+    def is_leader(self):
+        return self.current_state == "LEADER"
 
     '''
         CLIENT-RELATED
@@ -309,7 +324,7 @@ class Server:
         if self.DEBUG:
             print("Put received: "+str(msg_dict))
         # TODO Remove this and put it in the timeout. implement some buffer here?
-        if self.current_state == STATES[2]:
+        if self.is_leader():
             mid = msg_dict.get('MID')
             key = msg_dict.get('key')
             val = msg_dict.get('value')
