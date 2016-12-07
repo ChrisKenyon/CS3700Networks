@@ -86,14 +86,21 @@ class Server:
                     # TODO make this where any put requests are sent from. The leader should probably have a request buffer sent rather than just this empty list
                     self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
                     self.kick_clock()
+            # Election clock timeout
             elif clock-self.last_timeout_time > self.election_timeout:
                 # Election timeout timed out
                 # This should be the only place current term is incremented, and only updated in handle vote rpc
                 self.current_term += 1
                 self.current_state = STATES[1]
                 #TODO: thread request_vote_rpc across all other replicas
-                self.request_vote_rpc(self.current_term, len(self.log), self.log[-1][0])
+                for replica in self.replica_ids:
+                    threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
+                # self.request_vote_rpc(self.current_term, len(self.log), self.log[-1][0])
                 self.kick_clock()
+
+    def update_term(self, term_value):
+        self.current_term = term_value
+        self.voted_this_term = False
 
     '''
         Rule Set
@@ -150,7 +157,7 @@ class Server:
     def append_entries_rpc(self,
                            term, prev_log_idx,
                            prev_log_term, entries, leader_commit, dst='FFFF'):
-        message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc', # TODO fill in src and dst
+        message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
                    'prev_log_idx':prev_log_idx,
                    'prev_log_term':prev_log_term,
                    'entries':entries, # (additional entries, lets just do one entry at a time for now)
@@ -232,8 +239,6 @@ class Server:
     '''
 
     def request_vote_rpc(self, term, last_log_index, last_log_term, dst='FFFF'):
-        # TODO: RequestVote RPCs should be sent in parallel to all other replicas. Is multicast too expensive vs
-        # threading request_vote_rpc?
         message = { 'dst':dst,
                     'type':'request_vote_rpc',
                     'term':term,
@@ -258,8 +263,7 @@ class Server:
 
         grant = term >= self.current_term and last_log_index >= len(self.log) and last_log_term >= self.log[-1][0]
         if term > self.current_term:
-            self.current_term = term
-            self.voted_this_term = False
+            self.update_term(term)
             self.kick_clock()
             # TODO move update term into a separate function so we always remember to clear voted this term amongst others
 
@@ -288,7 +292,9 @@ class Server:
             self.current_state = STATES[2]
             self.votes_received = []
             # TODO: thread append_entries_rpc across all other replicas
-            self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
+            for replica in self.replica_ids:
+                threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index), kwargs={"dst": replica}).start()
+            # self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
 
 
 
