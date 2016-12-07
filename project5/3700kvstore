@@ -208,26 +208,23 @@ class Server:
             self.send_message(return_msg)
             return
 
-        # TODO make this multiple entries
-        new_entry = None
-        if len(entries) > 0:
-            new_entry = entries[0]
+        # If there is data, loop through list of entries
+        for i in range(len(entries)):
+            new_entry = entries[i]
             new_mid = new_entry[1].keys()[0]
             log_mids = [entry[1].keys()[0] for entry in self.log]
 
-        if new_entry and new_mid in log_mids and self.log[log_mids.index(new_mid)][0] != term: #3 - TODO not sure this is what it means
-            self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
-
-        if new_entry:
+            if new_mid in log_mids and self.log[log_mids.index(new_mid)][0] != term: #3 - TODO not sure this is what it means
+                self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
             #4
-            # TODO handle when multiple entries behind
             self.log.append((term,{new_mid: { new_entry.get(new_mid).keys()[0] : new_entry.get(new_mid).keys()[0] }}))
             self.prev_log_index += 1
             self.prev_log_term = term
-        #5
-        if leader_commit > self.commit_index:
-            self.commit_index = min(leader_commit, self.prev_log_index)
-            # TODO commit data here???
+
+            #5 I think we'd want to put this here? Since we're incrementing w/each new entry
+            if leader_commit > self.commit_index:
+                self.commit_index = min(leader_commit, self.prev_log_index)
+                # TODO commit data here???
 
         return_msg['success'] = True
         self.send_message(return_msg)
