@@ -184,14 +184,6 @@ class Server:
         prev_log_term = msg_dict.get('prev_log_term')
         entries = msg_dict.get('entries')
         leader_commit = msg_dict.get('leader_commit')
-
-        # TODO make this multiple entries
-        new_entry = None
-        if len(entries) > 0:
-            new_entry = entries[0]
-            new_mid = new_entry[1].keys()[0]
-            log_mids = [entry[1].keys()[0] for entry in self.log]
-
         return_msg = {'dst':dst,
                       'type':'append_rpc_response',
                       'term':self.current_term,
@@ -204,12 +196,24 @@ class Server:
             # then update leader
             self.leader = leader
 
-        if term < self.current_term: #1
+        # Case where current replica is in candidate mode and receives RPC from legitimate leader
+        # Case where self is candidate and RPC term < current_term is covered in next if statement
+        if self.state == STATES[1] and term >= self.current_term:
+            self.state = STATES[0]
+            self.votes_received = []
+            self.voted_this_term = False
+
+        # Terminating cases
+        if (term < self.current_term) or (self.log[prev_log_idx][0] != prev_log_term): #1 & 2
             self.send_message(return_msg)
             return
-        elif self.log[prev_log_idx][0] != prev_log_term: #2
-            self.send_message(return_msg)
-            return
+
+        # TODO make this multiple entries
+        new_entry = None
+        if len(entries) > 0:
+            new_entry = entries[0]
+            new_mid = new_entry[1].keys()[0]
+            log_mids = [entry[1].keys()[0] for entry in self.log]
 
         if new_entry and new_mid in log_mids and self.log[log_mids.index(new_mid)][0] != term: #3 - TODO not sure this is what it means
             self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
@@ -265,11 +269,10 @@ class Server:
         if term > self.current_term:
             self.update_term(term)
             self.kick_clock()
-            # TODO move update term into a separate function so we always remember to clear voted this term amongst others
 
-        self.vote(grant,dst, dst,term)
+        self.vote(grant, dst, dst, term)
 
-    def vote(self, grant, dst, candidate_id,term):
+    def vote(self, grant, dst, candidate_id, term):
         message = {'dst': dst,
                    'type': 'vote',
                    'term': max(term, self.current_term), # TODO is this how it should be?
