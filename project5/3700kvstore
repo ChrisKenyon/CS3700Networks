@@ -281,7 +281,7 @@ class Server:
             if msg_dict.get('voteGranted'):
                 self.supporters.append(msg_dict.get('src'))
             # Majority rejected replica's request for votes
-            if votes_received - len(self.supporters) > math.floor(len(self.replica_ids) / 2):
+            if self.votes_received - len(self.supporters) > math.floor(len(self.replica_ids) / 2):
                 self.switch_to_follower()
             # Majority voted for replica
             if len(self.supporters) > math.floor(len(self.replica_ids) / 2):
