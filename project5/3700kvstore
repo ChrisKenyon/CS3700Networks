@@ -23,7 +23,8 @@ class Server:
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
         self.election_timeout = random.randrange(150, 300) * 0.001
-        self.votes_received = []
+        self.supporters = []
+        self.votes_received = 0
         self.voted_this_term = False
 
         ##### Persistent States #####
@@ -274,9 +275,14 @@ class Server:
 
     def handle_vote(self,msg_dict):
         if self.is_candidate():
+            self.votes_received += 1
             if msg_dict.get('voteGranted'):
-                self.votes_received.append(msg_dict.get('src'))
-            if len(self.votes_received) > math.floor(len(self.replica_ids) / 2):
+                self.supporters.append(msg_dict.get('src'))
+            # Majority rejected replica's request for votes
+            if votes_received - len(self.supporters) > math.floor(len(self.replica_ids) / 2):
+                self.switch_to_follower()
+            # Majority voted for replica
+            if len(self.supporters) > math.floor(len(self.replica_ids) / 2):
                 if self.DEBUG:
                     print("{}: IM THE LEADER!".format(self.my_id))
                 self.switch_to_leader()
@@ -286,7 +292,8 @@ class Server:
     def switch_to_candidate(self):
         self.current_state = "CANDIDATE"
         self.current_term += 1
-        self.votes_received = [self.my_id]
+        self.supporters = [self.my_id]
+        self.votes_received = 0
         self.votedFor = self.my_id
         self.voted_this_term = True
 
@@ -296,7 +303,8 @@ class Server:
     def switch_to_follower(self):
         self.current_state = "FOLLOWER"
         self.voted_this_term = False
-        self.votes_received = []
+        self.supporters = []
+        self.votes_received = 0
         self.kick_clock()
 
     def is_follower(self):
