@@ -7,6 +7,9 @@ STATES = ['FOLLOWER','CANDIDATE','LEADER']
 
 class Server:
     def __init__(self,my_id,replicas):
+
+        self.DEBUG = False
+
         self.my_id = my_id
         self.replica_ids = replicas
         # Connect to the network. All messages to/from other replicas and clients will
@@ -21,8 +24,7 @@ class Server:
         ##### Election ######
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
-        # TODO self.election_timeout = random.randrange(150, 300) * 0.001
-        self.election_timeout = random.randrange(50, 100) * 0.01 # TODO FOR DEBUG - lets make it .5 to 1 seconds
+        self.election_timeout = random.randrange(150, 300) * 0.001
         self.votes_received = []
         self.voted_this_term = False
 
@@ -54,16 +56,17 @@ class Server:
         self.leader = 'FFFF'
 
     def send_message(self, msg_dict, print_msg=None):
-        if print_msg:
+        if self.DEBUG and print_msg:
             print(print_msg)
         msg_dict.update({'leader':self.leader})
-        print("SENDING FROM {}: ".format(self.my_id) + str(msg_dict))
+        msg_dict.update({'src':self.my_id})
+        if self.DEBUG:
+            print("SENDING FROM {}: ".format(self.my_id) + str(msg_dict))
         self.sock.send(json.dumps(msg_dict))
 
     def kick_clock(self):
         self.last_timeout_time = time.time()
-        # TODO self.election_timeout = random.randrange(150, 300) * 0.001
-        self.election_timeout = random.randrange(50, 100) * 0.01 # TODO FOR DEBUG - lets make it .5 to 1 seconds
+        self.election_timeout = random.randrange(150, 300) * 0.001
 
     def start(self):
         threading.Thread(target=self.timeout_thread).start()
@@ -122,7 +125,7 @@ class Server:
         follower
     If election timeout elapses: start new election
     '''
-    ##### Leaders #####
+    ##### Leaders ##### TODO most of this
     '''
     Upon election: send initial empty append_entries_rpc
         (heartbeat) to each server; repeat during idle periods to
@@ -179,17 +182,20 @@ class Server:
         new_entry = None
         if len(entries) > 0:
             new_entry = entries[0]
-            new_mid = new_entry.get('MID')
+            new_mid = new_entry[1].keys()[0]
             log_mids = [entry[1].keys()[0] for entry in self.log]
 
-        return_msg = {'src':self.my_id,
-                      'dst':dst,
+        return_msg = {'dst':dst,
                       'type':'append_rpc_response',
                       'term':self.current_term,
                       'success':False}
 
         # Update from heartbeat
         self.kick_clock()
+        # If this is the initial heartbeat after a leader election
+        if len(entries) == 0:
+            # then update leader
+            self.leader = leader
 
         if term < self.current_term: #1
             self.send_message(return_msg)
@@ -197,7 +203,6 @@ class Server:
         elif self.log[prev_log_idx][0] != prev_log_term: #2
             self.send_message(return_msg)
             return
-
 
         if new_entry and new_mid in log_mids and self.log[log_mids.index(new_mid)][0] != term: #3 - TODO not sure this is what it means
             self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
@@ -216,9 +221,11 @@ class Server:
         return_msg['success'] = True
         self.send_message(return_msg)
 
-    def handle_append_rpc_response(self):
-        pass
-
+    def handle_append_rpc_response(self, msg_dict):
+        # TODO get quorum from replicas on entry appends
+        if self.current_state == STATES[2]:
+            # TODO take care of leader duties
+            pass
 
     '''
         Request Vote RPC
@@ -227,8 +234,7 @@ class Server:
     def request_vote_rpc(self, term, last_log_index, last_log_term, dst='FFFF'):
         # TODO: RequestVote RPCs should be sent in parallel to all other replicas. Is multicast too expensive vs
         # threading request_vote_rpc?
-        message = {'src':self.my_id,
-                    'dst':dst,
+        message = { 'dst':dst,
                     'type':'request_vote_rpc',
                     'term':term,
                     'last_log_index':last_log_index,
@@ -260,8 +266,7 @@ class Server:
         self.vote(grant,dst, dst,term)
 
     def vote(self, grant, dst, candidate_id,term):
-        message = {'src': self.my_id,
-                   'dst': dst,
+        message = {'dst': dst,
                    'type': 'vote',
                    'term': max(term, self.current_term), # TODO is this how it should be?
                    'voteGranted': grant}
@@ -277,7 +282,8 @@ class Server:
         if msg_dict.get('voteGranted'):
             self.votes_received.append(msg_dict.get('src'))
         if len(self.votes_received) > math.floor(len(self.replica_ids) / 2):
-            print("IM THE LEADER!")
+            if self.DEBUG:
+                print("{}: IM THE LEADER!".format(self.my_id))
             self.leader = self.my_id
             self.current_state = STATES[2]
             self.votes_received = []
@@ -291,25 +297,48 @@ class Server:
     '''
 
 
-    def redirect_put_to_leader(self,msg_dict):
-        msg_dict['dst']=self.leader
-        self.send_message(msg_dict)
+    def redirect(self,msg_dict):
+        redir_msg_dict = {'dst':msg_dict.get('src'),
+                          'type':'redirect',
+                          'MID':msg_dict.get('MID')}
+        self.send_message(redir_msg_dict)
 
     def handle_put(self,msg_dict):
-        print("Put received: "+str(msg_dict))
+        if self.DEBUG:
+            print("Put received: "+str(msg_dict))
         # TODO Remove this and put it in the timeout. implement some buffer here?
         if self.current_state == STATES[2]:
-            self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
-            # TODO add to log
-            # TODO respond with ok or fail
+            mid = msg_dict.get('MID')
+            key = msg_dict.get('key')
+            val = msg_dict.get('val')
+            new_entry = (self.current_term,{mid:{key:val}})
+            self.log.append(new_entry)
+            self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [new_entry], self.commit_index)
+            ok_msg_dict = {'dst':msg_dict.get('src'),
+                           'type':'ok',
+                           'MID': mid}
+            self.send_message(ok_msg_dict)
+            # TODO respond with fail if necessary?
         else:
-            self.redirect_put_to_leader(msg_dict)
+            self.redirect(msg_dict)
 
     def handle_get(self,msg_dict):
-        print("Get received: "+str(msg_dict))
-        # TODO return from self.data
-        # TODO respond with ok or fail
-        pass
+        if self.DEBUG:
+            print("Get received: "+str(msg_dict))
+        mid = msg_dict.get('MID')
+        if self.current_state == STATES[2]:
+            key = msg_dict.get('key')
+            if key in self.data:
+                ok_msg_dict = {'dst':msg_dict.get('src'),
+                               'type':'ok',
+                               'MID': mid,
+                               'value':self.data[key]}
+                self.send_message(ok_msg_dict)
+                return
+        fail_msg_dict = {'dst':msg_dict.get('src'),
+                         'type':'fail',
+                         'MID': mid}
+        self.send_message(fail_msg_dict)
 
     '''
         Handler
@@ -322,9 +351,8 @@ class Server:
                        'put':self.handle_put,
                        'get':self.handle_get,}
         msg_dict = json.loads(message)
-        #if msg_dict.get('dst') in (self.my_id, 'FFFF'):
-        # Handle noop messages. This may be removed from your final implementation
-        switch_case[msg_dict.get('type')](msg_dict)
+        if msg_dict.get('dst') in (self.my_id, 'FFFF'):
+            switch_case[msg_dict.get('type')](msg_dict)
 
 
 
