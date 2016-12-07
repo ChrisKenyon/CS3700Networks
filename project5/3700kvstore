@@ -88,14 +88,15 @@ class Server:
                     self.kick_clock()
             # Election clock timeout
             elif clock-self.last_timeout_time > self.election_timeout:
-                # Election timeout timed out
+                # Election timeout timed out. Start election campaign
                 # This should be the only place current term is incremented, and only updated in handle vote rpc
                 self.current_term += 1
                 self.current_state = STATES[1]
-                #TODO: thread request_vote_rpc across all other replicas
+                self.votedFor = self.my_id
+                self.voted_this_term = True
+                self.votes_received = []
                 for replica in self.replica_ids:
                     threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
-                # self.request_vote_rpc(self.current_term, len(self.log), self.log[-1][0])
                 self.kick_clock()
 
     def update_term(self, term_value):
@@ -247,8 +248,6 @@ class Server:
                     'term':term,
                     'last_log_index':last_log_index,
                     'last_log_term':last_log_term}
-        self.votedFor = self.my_id
-        self.voted_this_term = True
         self.send_message(message, '{} requesting vote RPC'.format(self.my_id))
 
     def handle_request_vote_rpc(self,msg_dict):
@@ -257,7 +256,6 @@ class Server:
         2. If votedFor is null or candidate_id, and candidate's log is at
         least as up-to-date as receiver's log, grant vote
         '''
-
         term = msg_dict.get('term')
         last_log_index = msg_dict.get('last_log_index')
         last_log_term = msg_dict.get('last_log_term')
@@ -274,7 +272,7 @@ class Server:
     def vote(self, grant, dst, candidate_id, term):
         message = {'dst': dst,
                    'type': 'vote',
-                   'term': max(term, self.current_term), # TODO is this how it should be?
+                   'term': term, # No spec on this. I think it makes sense for the vote to include the requested term (to indicate requestor and receiver are talking about the same term)
                    'voteGranted': grant}
         if grant and not self.voted_this_term:
             self.kick_clock()
@@ -293,12 +291,8 @@ class Server:
             self.leader = self.my_id
             self.current_state = STATES[2]
             self.votes_received = []
-            # TODO: thread append_entries_rpc across all other replicas
             for replica in self.replica_ids:
                 threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index), kwargs={"dst": replica}).start()
-            # self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
-
-
 
     '''
         CLIENT-RELATED
