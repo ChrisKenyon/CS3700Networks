@@ -6,7 +6,6 @@ import sys, socket, select, time, json, random
 class Server:
     def __init__(self,my_id,replicas):
 
-        #self.DEBUG = True
         self.DEBUG = False
 
         self.my_id = my_id
@@ -38,6 +37,7 @@ class Server:
         # log entries - contains collections of command for state machine, term when received
         # 1-indexed.   Format: (term, {MID:{key:value}})
         # this format is tentative, but should work as just data considering we only get and put, no delete and etc.
+        # TODO: This is our system and a 1-indexed log is fucking annoying. change it down the road. BE CAREFUL
         self.log = [(1,{1:{None:None}})]
 
         ##### Volatile States #####
@@ -158,10 +158,14 @@ class Server:
     '''
     # Destination is a required parameter for log consistency checks
     def append_entries_rpc(self, dst, entries = []):
+        # NOTE: log is 1-indexed. So prev_term may need to be self.next_indexes[dst] - 2
+        # NOTE: next_index may be as high as len(leader_log) + 1
+        #   and len(leader_log) is actually index len(leader_log) - 1.
+        #   SO next_index's actual index is next_index - 1 and prev_log_idx is actually next_index - 2
         message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
                    'term':self.current_term,
-                   'prev_log_idx':self.next_indexes[dst]-1,
-                   'prev_log_term':self.log[self.next_indexes[dst]-1][0],
+                   'prev_log_idx':self.next_indexes[dst]-2,
+                   'prev_log_term':self.log[self.next_indexes[dst]-2][0],
                    'entries':entries,
                    'leader_commit':self.commit_index}
 
@@ -238,7 +242,7 @@ class Server:
 
             #5
             if leader_commit > self.commit_index:
-                self.commit_index = min(leader_commit, len(self.log)-1)
+                self.commit_index = min(leader_commit, len(self.log)) # NOTE: Log is 1-indexed
                 if self.DEBUG:
                     print "follower new index: " + str(self.commit_index)
                 # Format: (term, {MID:{key:value}})
@@ -329,9 +333,6 @@ class Server:
                 if self.DEBUG:
                     print("{}: IM THE LEADER!".format(self.my_id))
                 self.switch_to_leader()
-                # On election, update all follower indexes to log index then adjust from there
-                self.next_indexes = {rep:self.commit_index+1 for rep in self.replica_ids}
-                self.match_indexes = {rep:0 for rep in self.replica_ids}
                 for replica in self.replica_ids:
                     threading.Thread(target=self.append_entries_rpc, args=(replica,), kwargs={'entries':[]}).start()
 
@@ -360,6 +361,11 @@ class Server:
         self.leader = self.my_id
         self.current_state = "LEADER"
         self.last_heartbeat = time.time()
+        self.commit_index = len(self.log) # Leader sanity check. REMEMBER log is 1-indexed
+        # On election, update all follower indexes to log index then adjust from there
+        self.next_indexes = {rep:self.commit_index+1 for rep in self.replica_ids}
+        self.match_indexes = {rep:0 for rep in self.replica_ids}
+
 
     def is_leader(self):
         return self.current_state == "LEADER"
