@@ -37,7 +37,6 @@ class Server:
         # log entries - contains collections of command for state machine, term when received
         # 1-indexed.   Format: (term, {MID:{key:value}})
         # this format is tentative, but should work as just data considering we only get and put, no delete and etc.
-        # TODO: This is our system and a 1-indexed log is fucking annoying. change it down the road. BE CAREFUL
         self.log = [(1,{1:{None:None}})]
 
         ##### Volatile States #####
@@ -97,6 +96,20 @@ class Server:
                 for replica in self.replica_ids:
                     threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
                 self.kick_clock()
+
+    # Because Log is considered 1-indexed but Python lists are 0-indexed. Access log here
+    # This is mostly so I don't have to keep calculating/verifying the log index when I'm
+    # doing stuff
+    # PYTHON LIST INDECES:
+    # |0|1|2|3|4|...
+    # LOG INDECES:
+    # |1|2|3|4|5|...
+    def log_get(self, index, end_index=None):
+        if index <= 0:
+            return None
+        if end_index:
+            return self.log[index-1: end_index-1]
+        return self.log[index-1]
 
     def update_term(self, term_value):
         self.current_term = term_value
@@ -158,14 +171,10 @@ class Server:
     '''
     # Destination is a required parameter for log consistency checks
     def append_entries_rpc(self, dst, entries = []):
-        # NOTE: log is 1-indexed. So prev_term may need to be self.next_indexes[dst] - 2
-        # NOTE: next_index may be as high as len(leader_log) + 1
-        #   and len(leader_log) is actually index len(leader_log) - 1.
-        #   SO next_index's actual index is next_index - 1 and prev_log_idx is actually next_index - 2
         message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
                    'term':self.current_term,
-                   'prev_log_idx':self.next_indexes[dst]-2,
-                   'prev_log_term':self.log[self.next_indexes[dst]-2][0],
+                   'prev_log_idx':self.next_indexes[dst]-1,
+                   'prev_log_term':self.log_get(self.next_indexes[dst]-1)[0] if self.next_indexes[dst]-1 >= 1 else self.current_term,
                    'entries':entries,
                    'leader_commit':self.commit_index}
 
@@ -197,7 +206,7 @@ class Server:
                         'dst':dst,
                         'type':'append_rpc_response',
                         'term':self.current_term,
-                        'prev_log_idx':len(self.log)-1,
+                        'prev_log_idx':len(self.log),
                         'success':False}
         # Update from heartbeat
         self.kick_clock()
@@ -215,14 +224,14 @@ class Server:
         # Case 1: leader's term < replica's term
         # Case 2: No entry at prev_log_idx with term matching prev_log_term.
         # Also checks that there is any entry at prev_log_idx
-        if (term < self.current_term) or prev_log_idx > self.commit_index or self.log[prev_log_idx][0] != prev_log_term:
+        if (term < self.current_term) or prev_log_idx > self.commit_index or self.log_get(prev_log_idx)[0] != prev_log_term:
             self.send_message(return_msg)
             return
 
         # If there is data, loop through list of entries
         for i in range(len(entries)):
             new_entry = entries[i]
-            log_index = prev_log_idx + i + 1 # Need "+ 1" becuase log is 1-indexed
+            log_index = prev_log_idx + i
             if self.DEBUG:
                 print "follower new entry: " + str(new_entry)
             new_mid = new_entry[1].keys()[0]
@@ -230,15 +239,13 @@ class Server:
             # log_mids = [entry[1].keys()[0] for entry in self.log]
 
             #3 Entry exists in replica's log but entry term != new_entry term
-            if len(self.log) > log_index and self.log[log_index][0] != new_entry[0]:
-                self.log = self.log[:log_index]
-
-            # if new_mid in log_mids and self.log[log_mids.index(new_mid)][0] != term: #3 - TODO not sure this is what it means
-            #     self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
+            if len(self.log) >= log_index and self.log_get(log_index)[0] != new_entry[0]:
+                self.log = self.log_get(0, log_index) # Equivalent to log[:log_index]
+                self.commit_index = len(self.log) # Better safe than sorry
+                self.last_applied = len(self.log)
 
             #4
             self.log.append(new_entry)
-            # self.prev_log_term = term # Not sure what this is doing...not defined anywhere else
 
             #5
             if leader_commit > self.commit_index:
@@ -247,12 +254,16 @@ class Server:
                     print "follower new index: " + str(self.commit_index)
                 # Format: (term, {MID:{key:value}})
                 # entry_to_commit = {key: value}
-                entry_to_commit = list(self.log[self.commit_index][1].values())[0]
-                self.data[list(entry_to_commit.keys())[0]]=list(entry_to_commit.values())[0]
+
+                # Multiple entries to apply
+                for i in range(self.commit_index - self.last_applied):
+                    log_entry = self.log_get(self.last_applied + i)
+                    entry_to_commit = list(log_entry[1].values())[0]
+                    self.data[list(entry_to_commit.keys())[0]]=list(entry_to_commit.values())[0]
 
         # TODO: double check this implementation and see if we're sending all missing entries
         # from prev_log_idx to leader's commitIndex
-        return_msg['prev_log_idx'] = len(self.log)-1
+        return_msg['prev_log_idx'] = len(self.log)
         return_msg['success'] = True
         self.send_message(return_msg)
 
@@ -270,7 +281,7 @@ class Server:
             # Need to send if self.log becomes longer than next_index for given host
             # if not msg_dict.get('success') or len(self.log) >= self.match_indexes[dst]:
             if not msg_dict.get('success') or self.commit_index >= self.next_indexes[dst]:
-                self.next_indexes[dst] = prev_idx+2 # prev_idx = len(follower_log) - 1, so '+2' should be next index
+                self.next_indexes[dst] = prev_idx + 1 
                 entries = self.log[self.next_indexes[dst]:]
                 threading.Thread(target=self.append_entries_rpc, args=(dst,), kwargs={'entries':entries}).start()
                 return
