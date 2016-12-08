@@ -105,9 +105,12 @@ class Server:
     # LOG INDECES:
     # |1|2|3|4|5|...
     def log_get(self, index, end_index=None):
-        if index <= 0:
+        if index <= 0 or index > len(self.log):
             return None
         if end_index:
+            if end_index == -1:
+                # go until end
+                return self.log[index-1:]
             return self.log[index-1: end_index-1]
         return self.log[index-1]
 
@@ -224,7 +227,7 @@ class Server:
         # Case 1: leader's term < replica's term
         # Case 2: No entry at prev_log_idx with term matching prev_log_term.
         # Also checks that there is any entry at prev_log_idx
-        if (term < self.current_term) or prev_log_idx > self.commit_index or self.log_get(prev_log_idx)[0] != prev_log_term:
+        if prev_log_idx > 0 and ((term < self.current_term) or prev_log_idx > self.commit_index or self.log_get(prev_log_idx)[0] != prev_log_term):
             self.send_message(return_msg)
             return
 
@@ -239,7 +242,7 @@ class Server:
             # log_mids = [entry[1].keys()[0] for entry in self.log]
 
             #3 Entry exists in replica's log but entry term != new_entry term
-            if len(self.log) >= log_index and self.log_get(log_index)[0] != new_entry[0]:
+            if self.log_get(log_index) and self.log_get(log_index)[0] != new_entry[0]:
                 self.log = self.log_get(0, log_index) # Equivalent to log[:log_index]
                 self.commit_index = len(self.log) # Better safe than sorry
                 self.last_applied = len(self.log)
@@ -257,9 +260,10 @@ class Server:
 
                 # Multiple entries to apply
                 for i in range(self.commit_index - self.last_applied):
-                    log_entry = self.log_get(self.last_applied + i)
+                    log_entry = self.log_get(self.last_applied + 1 + i)
                     entry_to_commit = list(log_entry[1].values())[0]
                     self.data[list(entry_to_commit.keys())[0]]=list(entry_to_commit.values())[0]
+                    self.last_applied = len(self.data)
 
         # TODO: double check this implementation and see if we're sending all missing entries
         # from prev_log_idx to leader's commitIndex
@@ -277,12 +281,15 @@ class Server:
             self.commit_index = sorted(self.match_indexes.values())[q_index]
             if self.DEBUG:
                 print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
+            # Update next_index
+            if self.next_indexes[dst] != prev_idx + 1:
+                self.next_indexes[dst] = prev_idx + 1
             # Handle a follower who is behind in log entries
             # Need to send if self.log becomes longer than next_index for given host
-            # if not msg_dict.get('success') or len(self.log) >= self.match_indexes[dst]:
-            if not msg_dict.get('success') or self.commit_index >= self.next_indexes[dst]:
-                self.next_indexes[dst] = prev_idx + 1 
-                entries = self.log[self.next_indexes[dst]:]
+            if self.commit_index > prev_idx or not msg_dict.get('success'):
+                if not msg_dict.get('success'):
+                    self.next_indexes[dst] = max(1, self.next_indexes[dst] - 1)
+                entries = self.log_get(self.next_indexes[dst], -1)
                 threading.Thread(target=self.append_entries_rpc, args=(dst,), kwargs={'entries':entries}).start()
                 return
 
