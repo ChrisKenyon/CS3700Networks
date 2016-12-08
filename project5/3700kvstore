@@ -23,6 +23,7 @@ class Server:
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
         self.election_timeout = random.randrange(150,300) * 0.01
+        self.heartbeat_timeout = 0.025 # 25 milliseconds
         self.elect_lock = threading.Lock()
         self.votes_received = []
         self.voted_this_term = False
@@ -81,10 +82,11 @@ class Server:
             clock = time.time()
             if self.is_leader():
                 # heartbeats
-                if clock-self.last_timeout_time > self.election_timeout / 10: #TODO address this hardcoded 3, the idea is that heart beats should be much faster than election timeout
+                if clock - self.last_heartbeat > self.heartbeat_timeout:
                     # TODO make this where any put requests are sent from. The leader should probably have a request buffer sent rather than just this empty list
-                    self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index)
-                    self.kick_clock()
+                    for replica in self.replica_ids:
+                        threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
+                    self.last_heartbeat = time.time()
             # Election clock timeout
             elif clock-self.last_timeout_time > self.election_timeout:
                 # Election timeout timed out. Start election campaign
@@ -236,6 +238,8 @@ class Server:
     '''
 
     def request_vote_rpc(self, term, last_log_index, last_log_term, dst='FFFF'):
+        if self.is_leader():
+            return
         message = { 'dst':dst,
                     'type':'request_vote_rpc',
                     'term':term,
@@ -307,6 +311,7 @@ class Server:
     def switch_to_leader(self):
         self.leader = self.my_id
         self.current_state = "LEADER"
+        self.last_heartbeat = time.time()
 
     def is_leader(self):
         return self.current_state == "LEADER"
