@@ -246,7 +246,7 @@ class Server:
             quorum_threshold = math.ceil(float(len(self.replica_ids))/2.0)
             quorum_index = int(quorum_threshold)-1
             sorted_match_indices = sorted(self.match_indexes.values())
-            if sorted_match_indices.count(sorted_match_indices[quorum_index]):
+            if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
                 self.commit_index = sorted_match_indices[quorum_index]
                 if self.DEBUG:
                     print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
