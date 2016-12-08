@@ -6,7 +6,8 @@ import sys, socket, select, time, json, random
 class Server:
     def __init__(self,my_id,replicas):
 
-        self.DEBUG = True
+        #self.DEBUG = True
+        self.DEBUG = False
 
         self.my_id = my_id
         self.replica_ids = replicas
@@ -337,7 +338,10 @@ class Server:
             val = msg_dict.get('value')
             new_entry = (self.current_term,{mid:{key:val}})
             self.log.append(new_entry)
-            self.append_entries_rpc(self.current_term, len(self.log), self.log[-1][0], [new_entry], self.commit_index)
+            # TODO Only do this after getting a quorum
+            self.data[key]=val
+            for replica in self.replica_ids:
+                threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index), kwargs={"dst": replica}).start()
             ok_msg_dict = {'dst':msg_dict.get('src'),
                            'type':'ok',
                            'MID': mid}
