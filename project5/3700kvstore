@@ -186,8 +186,8 @@ class Server:
         return_msg = {'dst':dst,
                       'type':'append_rpc_response',
                       'term':self.current_term,
+                      'prev_log_idx':len(self.log)-1,
                       'success':False}
-
         # Update from heartbeat
         self.kick_clock()
         # If this is the initial heartbeat after a leader election
@@ -215,24 +215,32 @@ class Server:
                 self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
             #4
             self.log.append((term,{new_mid: { new_entry.get(new_mid).keys()[0] : new_entry.get(new_mid).keys()[0] }}))
-            self.prev_log_index += 1
             self.prev_log_term = term
 
-            #5 I think we'd want to put this here? Since we're incrementing w/each new entry
+            #5
             if leader_commit > self.commit_index:
-                self.commit_index = min(leader_commit, self.prev_log_index)
-                # TODO commit data here???
-                # TODO We only want to do this is we have a quorum, but lets just do it for now for simple cases
-                self.data[new_entry.get(new_mid).keys()[0]]=new_entry.get(new_mid).values()[0]
+                self.commit_index = min(leader_commit, len(self.log)-1)
+                entry_to_commit = self.log[self.commit_index][1].values()[0]
+                self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
+
+        return_msg['prev_log_idx'] = len(self.log)-1
         return_msg['success'] = True
         self.send_message(return_msg)
 
     def handle_append_rpc_response(self, msg_dict):
         # TODO get quorum from replicas on entry appends
         if self.is_leader():
-            # TODO take care of leader duties
-            pass
+            dst = msg_dict.get('src')
+            prev_idx = msg_dict.get('prev_log_idx')
+
+            # Handle a follower who is behind in log entries
+            if not msg_dict.get('success'):
+                entries = self.log[prev_idx:]
+                threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], entries, self.commit_index), kwargs={"dst": replica}).start()
+                return
+
+
 
     '''
         Request Vote RPC
