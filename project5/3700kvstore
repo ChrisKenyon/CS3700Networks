@@ -203,7 +203,7 @@ class Server:
             self.switch_to_follower()
 
         # Terminating cases
-        if (term < self.current_term):# TODO need to figure this out... or len(self.log)<=prev_log_idx or (self.log[prev_log_idx][0] != prev_log_term): #1 & 2
+        if (term < self.current_term):# TODO need to figure this out... or len(self.log)<prev_log_idx: or (self.log[prev_log_idx][0] != prev_log_term): #1 & 2
             self.send_message(return_msg)
             return
 
@@ -223,11 +223,14 @@ class Server:
 
             #5
             if leader_commit > self.commit_index:
+                prev = self.commit_index
                 self.commit_index = min(leader_commit, len(self.log)-1)
+                for i in range(prev+1,self.commit_index+1):
+                    key = self.log[i][1].values()[0].keys()[0]
+                    val = self.log[i][1].values()[0][key]
+                    self.data[key] = val
                 if self.DEBUG:
                     print "follower new index: " + str(self.commit_index)
-                entry_to_commit = self.log[self.commit_index][1].values()[0]
-                self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
 
         return_msg['prev_log_idx'] = len(self.log)-1
@@ -241,7 +244,12 @@ class Server:
             # get quorum index
             self.match_indexes[dst] = prev_idx
             q_index = int(math.ceil(float(len(self.replica_ids))/2.0))-1
+            prev = self.commit_index
             self.commit_index = sorted(self.match_indexes.values())[q_index]
+            for i in range(prev+1,self.commit_index+1):
+                key = self.log[i][1].values()[0].keys()[0]
+                val = self.log[i][1].values()[0][key]
+                self.data[key] = val
             if self.DEBUG:
                 print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
@@ -356,8 +364,10 @@ class Server:
             val = msg_dict.get('value')
             new_entry = (self.current_term,{mid:{key:val}})
             self.log.append(new_entry)
+            '''
             # TODO Only do this after getting a quorum
             self.data[key]=val
+            '''
             for replica in self.replica_ids:
                 threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
             ok_msg_dict = {'dst':msg_dict.get('src'),
