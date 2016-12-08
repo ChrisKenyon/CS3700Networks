@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 import math
+import threading
 import sys, socket, select, time, json, random
-
-STATES = ['FOLLOWER','CANDIDATE','LEADER']
 
 class Server:
     def __init__(self,my_id,replicas):
+
+        self.DEBUG = False
+
         self.my_id = my_id
         self.replica_ids = replicas
         # Connect to the network. All messages to/from other replicas and clients will
@@ -13,48 +15,62 @@ class Server:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         self.sock.connect(my_id)
         # control clock
-        self.current_time = time.time()
+        self.last_timeout_time = time.time()
         # Current state. Default to follower
-        self.current_state = STATES[0]
+        self.switch_to_follower()
 
         ##### Election ######
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
-        self.election_timeout = random.randrange(150, 300) * 0.001
-        self.votes_received = []
+        self.election_timeout = random.randrange(150,300) * 0.01
+        self.heartbeat_timeout = 0.025 # 25 milliseconds
+        self.elect_lock = threading.Lock()
+        self.supporters = []
+        self.votes_received = 0
+        self.voted_this_term = False
 
         ##### Persistent States #####
         # Current term that this node thinks it is (default 0)
-        self.current_term = 0
+        self.current_term = 1
         # Candidate that received this term's vote
         self.voted_for = None
         # log entries - contains collections of command for state machine, term when received
-        # 1-indexed
-        self.log = []
+        # 1-indexed.   Format: (term, {MID:{key:value}})
+        # this format is tentative, but should work as just data considering we only get and put, no delete and etc.
+        self.log = [(1,{1:{None:None}})]
 
         ##### Volatile States #####
         # highest known log entry committed (default 0)
         self.commit_index = 0
-        # index of highest log entry commited in log[]
+        # index of highest log entry applied to state machine
         self.last_applied = 0
         #
 
         ##### Volatile Leader States #####
         # index of the next log entry to send to each server (default: leader's last log index + 1)
-        self.next_indexes = []
+        self.next_indexes = {} # Initialized to commit_index + 1 for each server
         # index of the highest log entry known replicated on a server for each server (default 0)
-        self.match_indexes = []
+        self.match_indexes = {rep:0 for rep in self.replica_ids}
 
-    def send_message(self, msg_dict, print_msg=None, update_clock=True):
-        self.sock.send(json.dumps(msg_dict))
-        if print_msg:
+        # the data to store after commiting
+        self.data = {}
+        self.leader = '9999' # TODO this is an indicator for now to say there's no leader at start
+
+    def send_message(self, msg_dict, print_msg=None):
+        if self.DEBUG and print_msg:
             print(print_msg)
-        if update_clock:
-            self.current_time = time.time()
+        msg_dict.update({'leader':self.leader})
+        msg_dict.update({'src':self.my_id})
+        if self.DEBUG:
+            print("{}: Sending: {}".format(self.my_id,str(msg_dict)))
+        self.sock.send(json.dumps(msg_dict))
+
+    def kick_clock(self):
+        self.last_timeout_time = time.time()
+        self.election_timeout = random.randrange(150, 300) * 0.01
 
     def start(self):
-        TIMEOUT = 2
-        last = time.time()
+        threading.Thread(target=self.timeout_thread).start()
         while True:
             ready = select.select([self.sock], [], [], 0.1)[0]
             if self.sock in ready:
@@ -62,25 +78,42 @@ class Server:
                 if len(msg_raw) == 0: continue
                 self.handle_message(msg_raw)
 
-            # ALL THIS HERE IS JUST SOME BULLSHIT CODE FROM THE STARTER SAMPLE:
+    def timeout_thread(self):
+        while True:
             clock = time.time()
-            if clock-self.current_time > TIMEOUT:
-                # Send a no-op message to a random peer every two seconds, just for fun
-                # You definitely want to remove this from your implementation
-                msg = {'src': self.my_id, 'dst': random.choice(self.replica_ids), 'leader': 'FFFF', 'type': 'noop'}
-                self.send_message(msg, '%s sending a NOOP to %s' % (msg['src'], msg['dst']))
-            # Election timeout timed out
-            elif clock-self.current_time > self.election_timeout:
-                self.current_term += 1
-                self.current_state = STATES[1]
-                #TODO: determine structure of log entries. Currently assuming entry's term # is at index 0
-                #TODO: thread request_vote_rpc across all other replicas
-                self.request_vote_rpc(self.current_term, self.my_id, len(self.log), self.log[-1][0])
-                # Just became leader
-                if len(self.votes_received) >= math.floor(len(self.replica_ids) / 2) + 1:
-                    self.state = STATES[2]
-                    # TODO: thread append_entries_rpc across all other replicas
-                    self.append_entries_rpc(self.current_term, self.my_id, self.last_log_index, self.last_log_term, [], self.commit_index)
+            if self.is_leader():
+                # heartbeats
+                if clock - self.last_heartbeat > self.heartbeat_timeout:
+                    # TODO make this where any put requests are sent from. The leader should probably have a request buffer sent rather than just this empty list
+                    for replica in self.replica_ids:
+                        threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
+                    self.last_heartbeat = time.time()
+            # Election clock timeout
+            elif clock-self.last_timeout_time > self.election_timeout:
+                # Election timeout timed out. Start election campaign
+                # This should be the only place current term is incremented, and only updated in handle vote rpc
+                self.switch_to_candidate()
+                for replica in self.replica_ids:
+                    threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
+                self.kick_clock()
+
+    # Because Log is considered 1-indexed but Python lists are 0-indexed. Access log here
+    # This is mostly so I don't have to keep calculating/verifying the log index when I'm
+    # doing stuff
+    # PYTHON LIST INDECES:
+    # |0|1|2|3|4|...
+    # LOG INDECES:
+    # |1|2|3|4|5|...
+    def log_get(self, index, end_index=None):
+        if index <= 0:
+            return None
+        if end_index:
+            return self.log[index-1: end_index-1]
+        return self.log[index-1]
+
+    def update_term(self, term_value):
+        self.current_term = term_value
+        self.voted_this_term = False
 
     '''
         Rule Set
@@ -112,7 +145,7 @@ class Server:
         follower
     If election timeout elapses: start new election
     '''
-    ##### Leaders #####
+    ##### Leaders ##### TODO most of this
     '''
     Upon election: send initial empty append_entries_rpc
         (heartbeat) to each server; repeat during idle periods to
@@ -132,23 +165,25 @@ class Server:
 
 
     '''
-        Append Entries RPC
+    Append Entries RPC
+
+    Leader includes index and term of entry in log immediately preceding new entries (nextIndex - 1)
     '''
-    def append_entries_rpc(self,
-                           term, leader_id, prev_log_idx,
-                           prev_log_term, entries, leader_commit, dest='FFFF'):
-        message = {'src':0,'dest':dest,'type':'request_vote_rpc', # TODO fill in src and dest
-                   'leader_id':leader_id,
-                   'prev_log_idx':prev_log_idx,
-                   'prev_log_term':prev_log_term,
+    # Destination is a required parameter for log consistency checks
+    def append_entries_rpc(self, dst, entries = []):
+        message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
+                   'term':self.current_term,
+                   'prev_log_idx':self.next_indexes[dst]-1,
+                   'prev_log_term':self.log_get(self.next_indexes[dst]-1)[0] if self.next_indexes[dst]-1 >= 1 else self.current_term,
                    'entries':entries,
-                   'leader_commit':leader_commit}
+                   'leader_commit':self.commit_index}
 
-        msg = json.dumps(message)
-        # TODO send to server
-        term, success = (0,False) # send call and decode receive message
+        if self.DEBUG:
+            print "sending new entry: "+str(entries)
 
-    def handle_append_entries_rpc(self,message):
+        self.send_message(message)
+
+    def handle_append_entries_rpc(self,msg_dict):
         '''
         1. Reply false if term < current_term
         2. Reply false if log doesn't contain an entry at prev_log_index
@@ -160,39 +195,110 @@ class Server:
         5. If leader_commit > commit_index, set commit_index =
         min(leader_commit, index of last new entry)
         '''
-        msg_dict = json.loads(message)
         term = msg_dict.get('term')
-        leader_id = msg_dict.get('leader_id')
+        dst = msg_dict.get('src')
+        leader = msg_dict.get('leader')
         prev_log_idx = msg_dict.get('prev_log_idx')
         prev_log_term = msg_dict.get('prev_log_term')
         entries = msg_dict.get('entries')
         leader_commit = msg_dict.get('leader_commit')
+        return_msg = {'src': self.my_id,
+                        'dst':dst,
+                        'type':'append_rpc_response',
+                        'term':self.current_term,
+                        'prev_log_idx':len(self.log),
+                        'success':False}
+        # Update from heartbeat
+        self.kick_clock()
+        # If this is the initial heartbeat after a leader election
+        if len(entries) == 0:
+            # then update leader
+            self.leader = leader
 
+        # Case where current replica is in candidate mode and receives RPC from legitimate leader
+        # Case where self is candidate and RPC term < current_term is covered in next if statement
+        if self.is_candidate() and term >= self.current_term:
+            self.switch_to_follower()
 
-        return current_term, True #TODO send as message
+        # Terminating cases
+        # Case 1: leader's term < replica's term
+        # Case 2: No entry at prev_log_idx with term matching prev_log_term.
+        # Also checks that there is any entry at prev_log_idx
+        if (term < self.current_term) or prev_log_idx > self.commit_index or self.log_get(prev_log_idx)[0] != prev_log_term:
+            self.send_message(return_msg)
+            return
+
+        # If there is data, loop through list of entries
+        for i in range(len(entries)):
+            new_entry = entries[i]
+            log_index = prev_log_idx + i
+            if self.DEBUG:
+                print "follower new entry: " + str(new_entry)
+            new_mid = new_entry[1].keys()[0]
+            # I think the new entries are supposed to start off at index prev_log_idx + 1?
+            # log_mids = [entry[1].keys()[0] for entry in self.log]
+
+            #3 Entry exists in replica's log but entry term != new_entry term
+            if len(self.log) >= log_index and self.log_get(log_index)[0] != new_entry[0]:
+                self.log = self.log_get(0, log_index) # Equivalent to log[:log_index]
+                self.commit_index = len(self.log) # Better safe than sorry
+                self.last_applied = len(self.log)
+
+            #4
+            self.log.append(new_entry)
+
+            #5
+            if leader_commit > self.commit_index:
+                self.commit_index = min(leader_commit, len(self.log)) # NOTE: Log is 1-indexed
+                if self.DEBUG:
+                    print "follower new index: " + str(self.commit_index)
+                # Format: (term, {MID:{key:value}})
+                # entry_to_commit = {key: value}
+
+                # Multiple entries to apply
+                for i in range(self.commit_index - self.last_applied):
+                    log_entry = self.log_get(self.last_applied + i)
+                    entry_to_commit = list(log_entry[1].values())[0]
+                    self.data[list(entry_to_commit.keys())[0]]=list(entry_to_commit.values())[0]
+
+        # TODO: double check this implementation and see if we're sending all missing entries
+        # from prev_log_idx to leader's commitIndex
+        return_msg['prev_log_idx'] = len(self.log)
+        return_msg['success'] = True
+        self.send_message(return_msg)
+
+    def handle_append_rpc_response(self, msg_dict):
+        if self.is_leader():
+            dst = msg_dict.get('src')
+            prev_idx = msg_dict.get('prev_log_idx')
+            # get quorum index
+            self.match_indexes[dst] = prev_idx
+            q_index = int(math.ceil(float(len(self.replica_ids))/2.0))-1
+            self.commit_index = sorted(self.match_indexes.values())[q_index]
+            if self.DEBUG:
+                print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
+            # Handle a follower who is behind in log entries
+            # Need to send if self.log becomes longer than next_index for given host
+            # if not msg_dict.get('success') or len(self.log) >= self.match_indexes[dst]:
+            if not msg_dict.get('success') or self.commit_index >= self.next_indexes[dst]:
+                self.next_indexes[dst] = prev_idx + 1 
+                entries = self.log[self.next_indexes[dst]:]
+                threading.Thread(target=self.append_entries_rpc, args=(dst,), kwargs={'entries':entries}).start()
+                return
 
 
     '''
-        Request Vote RPC
+    Request Vote RPC
     '''
-
-    def request_vote_rpc(self, term, candidate_id, last_log_index, last_log_term, dest='FFFF'):
-        # TODO: RequestVote RPCs should be sent in parallel to all other replicas. Is multicast too expensive vs
-        # threading request_vote_rpc?
-        message = {'src':self.my_id,
-                    'dest':dest,
+    def request_vote_rpc(self, term, last_log_index, last_log_term, dst='FFFF'):
+        if self.is_leader():
+            return
+        message = { 'dst':dst,
                     'type':'request_vote_rpc',
                     'term':term,
-                    'candidate_id':candidate_id,
                     'last_log_index':last_log_index,
                     'last_log_term':last_log_term}
-        self.votedFor = self.my_id
-        self.send_message(message, '{} requesting vote RPC'.format(self.my_id))
-        msg_raw = self.sock.recv(32768)
-        msg_dict = json.loads(msg_raw)
-        if msg_dict.get('voteGranted'):
-            self.votes_received.append(msg_dict['id'])
-        return (msg_dict.get('term'), msg_dict.get('voteGranted')) == (term, True)
+        self.send_message(message)#, '{} requesting vote RPC'.format(self.my_id))
 
     def handle_request_vote_rpc(self,msg_dict):
         '''
@@ -200,48 +306,151 @@ class Server:
         2. If votedFor is null or candidate_id, and candidate's log is at
         least as up-to-date as receiver's log, grant vote
         '''
-
         term = msg_dict.get('term')
-        candidate_id = msg_dict.get('candidate_id')
         last_log_index = msg_dict.get('last_log_index')
         last_log_term = msg_dict.get('last_log_term')
+        dst = msg_dict.get('src')
 
-        message = {'id': self.my_id, 'term': max(term, self.current_term), 'voteGranted': False}
+        grant = term >= self.current_term and last_log_index >= len(self.log) and last_log_term >= self.log[-1][0]
+        if term > self.current_term:
+            self.update_term(term)
+            self.kick_clock()
 
-        if term >= self.current_term and last_log_index >= self.last_log_index and last_log_term >= self.last_log_term:
-            message.update({"voteGranted": True})
-            self.send_message(message,'{} cast vote for {}'.format(self.my_id, candidate_id))
-            return
+        self.vote(grant, dst, dst, term)
 
-        self.send_message(message, '{} denied vote to {}'.format(self.my_id, candidate_id))
-        return
+    def vote(self, grant, dst, candidate_id, term):
+        grant = grant and not self.voted_this_term
+        message = {'dst': dst,
+                   'type': 'vote',
+                   'term': term, # No spec on this. I think it makes sense for the vote to include the requested term (to indicate requestor and receiver are talking about the same term)
+                   'voteGranted': grant}
+        if grant:
+            self.send_message(message)#,'{} cast vote for {}'.format(self.my_id, candidate_id))
+            self.switch_to_follower()
+            self.voted_this_term = True
+        else:
+            self.send_message(message)#, '{} denied vote to {}'.format(self.my_id, candidate_id))
+
+    def handle_vote(self,msg_dict):
+        if self.is_candidate():
+            self.votes_received += 1
+            if msg_dict.get('voteGranted'):
+                self.supporters.append(msg_dict.get('src'))
+            # Majority rejected replica's request for votes
+            if self.votes_received - len(self.supporters) > math.floor(len(self.replica_ids) / 2):
+                self.switch_to_follower()
+            # Majority voted for replica
+            if len(self.supporters) > math.floor(len(self.replica_ids) / 2):
+                if self.DEBUG:
+                    print("{}: IM THE LEADER!".format(self.my_id))
+                self.switch_to_leader()
+                for replica in self.replica_ids:
+                    threading.Thread(target=self.append_entries_rpc, args=(replica,), kwargs={'entries':[]}).start()
+
+    def switch_to_candidate(self):
+        self.current_state = "CANDIDATE"
+        self.current_term += 1
+        self.supporters = [self.my_id]
+        self.votes_received = 0
+        self.votedFor = self.my_id
+        self.voted_this_term = True
+
+    def is_candidate(self):
+        return self.current_state == "CANDIDATE"
+
+    def switch_to_follower(self):
+        self.current_state = "FOLLOWER"
+        self.voted_this_term = False
+        self.supporters = []
+        self.votes_received = 0
+        self.kick_clock()
+
+    def is_follower(self):
+        return self.current_state == "FOLLOWER"
+
+    def switch_to_leader(self):
+        self.leader = self.my_id
+        self.current_state = "LEADER"
+        self.last_heartbeat = time.time()
+        self.commit_index = len(self.log) # Leader sanity check. REMEMBER log is 1-indexed
+        # On election, update all follower indexes to log index then adjust from there
+        self.next_indexes = {rep:self.commit_index+1 for rep in self.replica_ids}
+        self.match_indexes = {rep:0 for rep in self.replica_ids}
+
+
+    def is_leader(self):
+        return self.current_state == "LEADER"
 
     '''
         CLIENT-RELATED
     '''
 
-    data = []
+
+    def redirect(self,msg_dict):
+        redir_msg_dict = {'dst':msg_dict.get('src'),
+                          'type':'redirect',
+                          'MID':msg_dict.get('MID')}
+        self.send_message(redir_msg_dict)
 
     def handle_put(self,msg_dict):
-        pass
+        if self.DEBUG:
+            print("Put received: "+str(msg_dict))
+        # TODO Remove this and put it in the timeout. implement some buffer here?
+        if self.is_leader():
+            mid = msg_dict.get('MID')
+            key = msg_dict.get('key')
+            val = msg_dict.get('value')
+            new_entry = (self.current_term,{mid:{key:val}})
+            self.log.append(new_entry)
+            # TODO Only do this after getting a quorum
+            self.data[key]=val
+            for replica in self.replica_ids:
+                threading.Thread(target=self.append_entries_rpc, args=(replica,), kwargs={'entries':[new_entry]}).start()
+            ok_msg_dict = {'dst':msg_dict.get('src'),
+                           'type':'ok',
+                           'MID': mid}
+            self.send_message(ok_msg_dict)
+        elif self.leader == '9999':
+            # fail
+            mid = msg_dict.get('MID')
+            fail_msg_dict = {'dst':msg_dict.get('src'),
+                           'type':'fail',
+                           'MID': mid}
+            self.send_message(fail_msg_dict)
+        else:
+            self.redirect(msg_dict)
 
     def handle_get(self,msg_dict):
-        pass
+        if self.DEBUG:
+            print("Get received: "+str(msg_dict))
+        mid = msg_dict.get('MID')
+        key = msg_dict.get('key')
+        if key in self.data:
+            ok_msg_dict = {'dst':msg_dict.get('src'),
+                           'type':'ok',
+                           'MID': mid,
+                           'value':self.data[key]}
+            self.send_message(ok_msg_dict)
+        else:
+            fail_msg_dict = {'dst':msg_dict.get('src'),
+                             'type':'fail',
+                             'MID': mid}
+            self.send_message(fail_msg_dict)
 
     '''
         Handler
                 '''
     def handle_message(self,message):
-
-        switch_case = {'append_entries_rpc_response':self.handle_append_entries_rpc,
-                        'handle_request_vote_rpc':self.handle_request_vote_rpc,
-                        'put':self.handle_put,
-                        'get':self.handle_get,}
+        switch_case = {'append_entries_rpc':self.handle_append_entries_rpc,
+                       'append_rpc_response':self.handle_append_rpc_response,
+                       'request_vote_rpc':self.handle_request_vote_rpc,
+                       'vote':self.handle_vote,
+                       'put':self.handle_put,
+                       'get':self.handle_get,}
+        if self.DEBUG:
+            print("{}: Received message: {}".format(self.my_id,message))
         msg_dict = json.loads(message)
-        # Handle noop messages. This may be removed from your final implementation
-        if msg_dict['type'] == 'noop':
-            print '%s received a NOOP from %s' % (msg_dict['dst'], msg_dict['src'])
-        else:
+        if msg_dict.get('dst') in (self.my_id, 'FFFF'):
             switch_case[msg_dict.get('type')](msg_dict)
 
 
@@ -252,7 +461,7 @@ class Server:
 
 def main():
     # Your ID number = sys.argv[1]
-    # The ID numbers of all the other replicas = sys.argv[2:]
+    # The ID numbers of all th,""other replicas = sys.argv[2:]
     server = Server(sys.argv[1], sys.argv[2:])
     server.start()
 
