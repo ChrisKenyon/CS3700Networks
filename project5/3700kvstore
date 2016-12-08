@@ -189,11 +189,12 @@ class Server:
         prev_log_term = msg_dict.get('prev_log_term')
         entries = msg_dict.get('entries')
         leader_commit = msg_dict.get('leader_commit')
-        return_msg = {'dst':dst,
-                      'type':'append_rpc_response',
-                      'term':self.current_term,
-                      'prev_log_idx':len(self.log)-1,
-                      'success':False}
+        return_msg = {'src': self.my_id,
+                        'dst':dst,
+                        'type':'append_rpc_response',
+                        'term':self.current_term,
+                        'prev_log_idx':len(self.log)-1,
+                        'success':False}
         # Update from heartbeat
         self.kick_clock()
         # If this is the initial heartbeat after a leader election
@@ -267,7 +268,7 @@ class Server:
             if not msg_dict.get('success') or self.commit_index >= self.next_indexes[dst]:
                 self.next_indexes[dst] = prev_idx+2 # prev_idx = len(follower_log) - 1, so '+2' should be next index
                 entries = self.log[self.next_indexes[dst]:]
-                threading.Thread(target=self.append_entries_rpc, args=(dst), kwargs={'entries':entries}).start()
+                threading.Thread(target=self.append_entries_rpc, args=(dst,), kwargs={'entries':entries}).start()
                 return
 
 
@@ -332,7 +333,7 @@ class Server:
                 self.next_indexes = {rep:self.commit_index+1 for rep in self.replica_ids}
                 self.match_indexes = {rep:0 for rep in self.replica_ids}
                 for replica in self.replica_ids:
-                    threading.Thread(target=self.append_entries_rpc, args=(replica), kwargs={'entries':[]}).start()
+                    threading.Thread(target=self.append_entries_rpc, args=(replica,), kwargs={'entries':[]}).start()
 
     def switch_to_candidate(self):
         self.current_state = "CANDIDATE"
@@ -387,7 +388,7 @@ class Server:
             # TODO Only do this after getting a quorum
             self.data[key]=val
             for replica in self.replica_ids:
-                threading.Thread(target=self.append_entries_rpc, args=(replica), kwargs={'entries':[new_entry]}).start()
+                threading.Thread(target=self.append_entries_rpc, args=(replica,), kwargs={'entries':[new_entry]}).start()
             ok_msg_dict = {'dst':msg_dict.get('src'),
                            'type':'ok',
                            'MID': mid}
