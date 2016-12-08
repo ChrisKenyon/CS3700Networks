@@ -6,8 +6,8 @@ import sys, socket, select, time, json, random
 class Server:
     def __init__(self,my_id,replicas):
 
-        #self.DEBUG = True
-        self.DEBUG = False
+        self.DEBUG = True
+        #self.DEBUG = False
 
         self.my_id = my_id
         self.replica_ids = replicas
@@ -50,7 +50,7 @@ class Server:
         # index of the next log entry to send to each server (default: leader's last log index + 1)
         self.next_indexes = []
         # index of the highest log entry known replicated on a server for each server (default 0)
-        self.match_indexes = []
+        self.match_indexes = {rep:0 for rep in self.replica_ids}
 
         # the data to store after commiting
         self.data = {}
@@ -153,14 +153,15 @@ class Server:
     '''
         Append Entries RPC
     '''
-    def append_entries_rpc(self,
-                           term, prev_log_idx,
-                           prev_log_term, entries, leader_commit, dst='FFFF'):
+    def append_entries_rpc(self, entries = [], dst='FFFF'):
         message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
-                   'prev_log_idx':prev_log_idx,
-                   'prev_log_term':prev_log_term,
-                   'entries':entries, # (additional entries, lets just do one entry at a time for now)
-                   'leader_commit':leader_commit}
+                   'term':self.current_term,
+                   'prev_log_idx':len(self.log)-1,
+                   'prev_log_term':self.log[-1][0],
+                   'entries':entries,
+                   'leader_commit':self.commit_index}
+
+        print "sending new entry: "+str(entries)
 
         self.send_message(message)
 
@@ -201,25 +202,28 @@ class Server:
             self.switch_to_follower()
 
         # Terminating cases
-        if (term < self.current_term) or (self.log[prev_log_idx][0] != prev_log_term): #1 & 2
+        if (term < self.current_term):# TODO need to figure this out... or len(self.log)<=prev_log_idx or (self.log[prev_log_idx][0] != prev_log_term): #1 & 2
             self.send_message(return_msg)
             return
 
         # If there is data, loop through list of entries
         for i in range(len(entries)):
             new_entry = entries[i]
+
+            print "follower new entry: " + str(new_entry)
             new_mid = new_entry[1].keys()[0]
             log_mids = [entry[1].keys()[0] for entry in self.log]
 
             if new_mid in log_mids and self.log[log_mids.index(new_mid)][0] != term: #3 - TODO not sure this is what it means
                 self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
             #4
-            self.log.append((term,{new_mid: { new_entry.get(new_mid).keys()[0] : new_entry.get(new_mid).keys()[0] }}))
+            self.log.append(new_entry)
             self.prev_log_term = term
 
             #5
             if leader_commit > self.commit_index:
                 self.commit_index = min(leader_commit, len(self.log)-1)
+                print "follower new index: " + str(self.commit_index)
                 entry_to_commit = self.log[self.commit_index][1].values()[0]
                 self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
@@ -229,15 +233,18 @@ class Server:
         self.send_message(return_msg)
 
     def handle_append_rpc_response(self, msg_dict):
-        # TODO get quorum from replicas on entry appends
         if self.is_leader():
             dst = msg_dict.get('src')
             prev_idx = msg_dict.get('prev_log_idx')
-
+            # get quorum index
+            self.match_indexes[dst] = prev_idx
+            q_index = int(math.ceil(float(len(self.replica_ids))/2.0))-1
+            self.commit_index = sorted(self.match_indexes.values())[q_index]
+            print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
             if not msg_dict.get('success'):
-                entries = self.log[prev_idx:]
-                threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], entries, self.commit_index), kwargs={"dst": replica}).start()
+                entries = self.log[prev_idx+1:]
+                threading.Thread(target=self.append_entries_rpc, kwargs={"dst": dst,'entries':entries}).start()
                 return
 
 
@@ -296,7 +303,7 @@ class Server:
                     print("{}: IM THE LEADER!".format(self.my_id))
                 self.switch_to_leader()
                 for replica in self.replica_ids:
-                    threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index), kwargs={"dst": replica}).start()
+                    threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[]}).start()
 
     def switch_to_candidate(self):
         self.current_state = "CANDIDATE"
@@ -349,7 +356,7 @@ class Server:
             # TODO Only do this after getting a quorum
             self.data[key]=val
             for replica in self.replica_ids:
-                threading.Thread(target=self.append_entries_rpc, args=(self.current_term, len(self.log), self.log[-1][0], [], self.commit_index), kwargs={"dst": replica}).start()
+                threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
             ok_msg_dict = {'dst':msg_dict.get('src'),
                            'type':'ok',
                            'MID': mid}
