@@ -6,8 +6,8 @@ import sys, socket, select, time, json, random
 class Server:
     def __init__(self,my_id,replicas):
 
-        self.DEBUG = True
-        #self.DEBUG = False
+        #self.DEBUG = True
+        self.DEBUG = False
 
         self.my_id = my_id
         self.replica_ids = replicas
@@ -161,7 +161,8 @@ class Server:
                    'entries':entries,
                    'leader_commit':self.commit_index}
 
-        print "sending new entry: "+str(entries)
+        if self.DEBUG:
+            print "sending new entry: "+str(entries)
 
         self.send_message(message)
 
@@ -209,8 +210,8 @@ class Server:
         # If there is data, loop through list of entries
         for i in range(len(entries)):
             new_entry = entries[i]
-
-            print "follower new entry: " + str(new_entry)
+            if self.DEBUG:
+                print "follower new entry: " + str(new_entry)
             new_mid = new_entry[1].keys()[0]
             log_mids = [entry[1].keys()[0] for entry in self.log]
 
@@ -223,7 +224,8 @@ class Server:
             #5
             if leader_commit > self.commit_index:
                 self.commit_index = min(leader_commit, len(self.log)-1)
-                print "follower new index: " + str(self.commit_index)
+                if self.DEBUG:
+                    print "follower new index: " + str(self.commit_index)
                 entry_to_commit = self.log[self.commit_index][1].values()[0]
                 self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
@@ -240,7 +242,8 @@ class Server:
             self.match_indexes[dst] = prev_idx
             q_index = int(math.ceil(float(len(self.replica_ids))/2.0))-1
             self.commit_index = sorted(self.match_indexes.values())[q_index]
-            print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
+            if self.DEBUG:
+                print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
             if not msg_dict.get('success'):
                 entries = self.log[prev_idx+1:]
