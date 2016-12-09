@@ -277,8 +277,15 @@ class Server:
                     print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
             if not msg_dict.get('success'):
-                entries = self.log[prev_idx+1:]
-                threading.Thread(target=self.append_entries_rpc, kwargs={"dst": dst,'entries':entries}).start()
+                # Limit to batches of 50 entries
+                if (len(self.log) - (prev_idx + 1)) > 50:
+                    # batch_count = prev_idx + 1
+                    for i in range(((len(self.log) - (prev_idx + 1)) / 50) + 1):
+                        idx = prev_idx + 1 + (i*50)
+                        entries = self.log[idx:idx+50]
+                else:
+                    entries = self.log[prev_idx+1:]
+                    threading.Thread(target=self.append_entries_rpc, kwargs={"dst": dst,'entries':entries}).start()
                 return
 
     '''
