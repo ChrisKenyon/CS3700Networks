@@ -179,8 +179,9 @@ class Server:
         if prev_log_index < len(self.log):
             prev_log_term = self.log[self.next_indexes[dst]-1][0]
         elif self.commit_index != len(self.log):
-            raise Exception("Mismatch Error. Commit index {} < log length {}".format(self.commit_index, len(self.log)))
-         
+            if self.DEBUG:
+                print("Mismatch WARNING: Commit index {} < log length {}".format(self.commit_index, len(self.log)))
+
         message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
                    'term':self.current_term,
                    'prev_log_idx':prev_log_index,
