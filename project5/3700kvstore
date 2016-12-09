@@ -294,13 +294,17 @@ class Server:
             # 3. Verify there is actually quorum w/value at index
             quorum_threshold = math.ceil(float(len(self.replica_ids))/2.0)
             quorum_index = int(quorum_threshold)-1
-            # TODO: Verify. We want a chance for commit_index to go high vs low (read: case where even # of replicas)
+            ########## QUORUM ##########
             # I think this is true bc leader should be most up to date and leader will opt for high
             # Otherwise 2 failed replicas stuck at low while the other 2 are incrementing high will keep leader at low
             # even though the 2 high will make quorum (situation where 5 nodes)
             sorted_match_indices = sorted(self.match_indexes.values(), reverse=True)
             if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
                 self.last_applied = sorted_match_indices[quorum_index]
+                # Get key, value pair in log. Format: (term, {MID:{key:value}})
+                kv_pair = list(self.log[self.last_applied][1].values())[0]
+                # Commit to data
+                self.data[list(kv_pair.keys())[0]] = list(kv_pair.values())[1]
                 if self.DEBUG:
                     print("{}. Leader commit index {}. last-applied index {}. match_indexes: {}".format(self.my_id, self.commit_index, self.last_applied, self.match_indexes))
             # Handle a follower who is behind in log entries
@@ -411,35 +415,33 @@ class Server:
         self.send_message(redir_msg_dict)
 
     def handle_put(self,msg_dict):
+        mid = msg_dict.get('MID')
+        key = msg_dict.get('key')
+        val = msg_dict.get('value')
+        return_msg = {'dst':msg_dict.get('src'),
+                       'type':'fail',
+                       'MID': mid}
         if self.DEBUG:
             print("Put received: "+str(msg_dict))
+
+        if not self.is_leader and self.leader != 'FFFF':
+            self.redirect()
+            return
         # TODO Remove this and put it in the timeout. implement some buffer here?
-        if self.is_leader():
-            mid = msg_dict.get('MID')
-            key = msg_dict.get('key')
-            val = msg_dict.get('value')
+        elif self.is_leader():
             new_entry = (self.current_term,{mid:{key:val}})
             self.log.append(new_entry)
             self.commit_index = len(self.log)
             if self.PRINT_LOGS:
                 print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
-            # TODO Only do this after getting a quorum?
-            self.data[key]=val
+
+            # # TODO Only do this after getting a quorum?
+            # self.data[key]=val
             for replica in self.replica_ids:
                 threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
-            ok_msg_dict = {'dst':msg_dict.get('src'),
-                           'type':'ok',
-                           'MID': mid}
-            self.send_message(ok_msg_dict)
-        elif self.leader == 'FFFF':
-            # fail
-            mid = msg_dict.get('MID')
-            fail_msg_dict = {'dst':msg_dict.get('src'),
-                           'type':'fail',
-                           'MID': mid}
-            self.send_message(fail_msg_dict)
-        else:
-            self.redirect(msg_dict)
+            return_msg.update({'type': 'ok'})
+
+        self.send_message(return_msg)
 
     def handle_get(self,msg_dict):
         #TODO not sure if gets should have redirects. There is a fail condition where a replica will respond with an out of date value in the data dictionary
@@ -455,7 +457,7 @@ class Server:
         if not self.is_leader() and self.leader != 'FFFF':
             self.redirect(msg_dict)
             return
-        elif self.data.get(key):
+        elif self.is_leader() and self.data.get(key):
             return_msg.update({'type': 'ok', 'value': self.data[key]})
 
         self.send_message(return_msg)
