@@ -175,8 +175,10 @@ class Server:
     def append_entries_rpc(self, entries = [], dst='FFFF'):
         message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
                    'term':self.current_term,
-                   'prev_log_idx':len(self.log)-1,
-                   'prev_log_term':self.log[-1][0],
+                   'prev_log_idx': self.next_indexes[dst] - 1,
+                   'prev_log_term': self.log[self.next_indexes[dst] - 2][0],
+                #    'prev_log_idx':len(self.log)-1,
+                #    'prev_log_term':self.log[-1][0],
                    'entries':entries,
                    'leader_commit':self.commit_index}
 
@@ -252,8 +254,7 @@ class Server:
                 entry_to_commit = self.log[self.commit_index][1].values()[0]
                 self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
-
-        return_msg['prev_log_idx'] = len(self.log)-1
+        return_msg['prev_log_idx'] = max(0, len(self.log)-1)
         return_msg['success'] = True
         self.send_message(return_msg)
 
@@ -263,6 +264,7 @@ class Server:
             prev_idx = msg_dict.get('prev_log_idx')
             # get quorum index
             self.match_indexes[dst] = prev_idx
+            self.next_indexes[dst] = prev_idx + 1
             # 1. Check the quorum threshold
             # 2. Check the index where commit index should reach quorum
             # 3. Verify there is actually quorum w/value at index
@@ -364,6 +366,7 @@ class Server:
         self.leader = self.my_id
         self.current_state = "LEADER"
         self.last_heartbeat = time.time()
+        self.next_indexes = {rep:self.commit_index + 1 for rep in self.replica_ids}
 
     def is_leader(self):
         return self.current_state == "LEADER"
