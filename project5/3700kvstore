@@ -37,7 +37,7 @@ class Server:
         # log entries - contains collections of command for state machine, term when received
         # 1-indexed.   Format: (term, {MID:{key:value}})
         # this format is tentative, but should work as just data considering we only get and put, no delete and etc.
-        self.log = [(1,{1:{"INIT":"DUMMY"}})]
+        self.log = [(1,{1:{None:None}})]
 
         ##### Volatile States #####
         # highest known log entry committed (default 0)
@@ -54,7 +54,7 @@ class Server:
 
         # the data to store after commiting
         self.data = {}
-        self.leader = '9999' # TODO this is an indicator for now to say there's no leader at start
+        self.leader = 'FFFF' # TODO this is an indicator for now to say there's no leader at start
 
     def send_message(self, msg_dict, print_msg=None):
         if self.DEBUG and print_msg:
@@ -172,17 +172,13 @@ class Server:
 
     Leader includes index and term of entry in log immediately preceding new entries (nextIndex - 1)
     '''
-    # Destination is a required parameter for log consistency checks
-    def append_entries_rpc(self, dst, entries = []):
-        try:
-            message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
-                       'term':self.current_term,
-                       'prev_log_idx':self.next_indexes[dst]-1,
-                       'prev_log_term':self.log_get(self.next_indexes[dst]-1)[0] if self.next_indexes[dst]-1 >= 1 else self.current_term,
-                       'entries':entries,
-                       'leader_commit':self.commit_index}
-        except TypeError:
-            print("\n{} NEXT_INDEX = {}. LAST ENTRY: {}\n".format(dst, self.next_indexes[dst], self.log_get(self.next_indexes[dst]-1)))
+    def append_entries_rpc(self, entries = [], dst='FFFF'):
+        message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
+                   'term':self.current_term,
+                   'prev_log_idx':len(self.log)-1,
+                   'prev_log_term':self.log[-1][0],
+                   'entries':entries,
+                   'leader_commit':self.commit_index}
 
         if self.DEBUG:
             print "sending new entry: "+str(entries)
@@ -204,23 +200,19 @@ class Server:
         term = msg_dict.get('term')
         dst = msg_dict.get('src')
         leader = msg_dict.get('leader')
+        if self.leader == 'FFFF':
+            self.leader = leader
         prev_log_idx = msg_dict.get('prev_log_idx')
         prev_log_term = msg_dict.get('prev_log_term')
         entries = msg_dict.get('entries')
         leader_commit = msg_dict.get('leader_commit')
-        return_msg = {'src': self.my_id,
-                        'dst':dst,
-                        'type':'append_rpc_response',
-                        'term':self.current_term,
-                        'prev_log_idx':len(self.log),
-                        'success':False,
-                        'fail_reason':None}
+        return_msg = {'dst':dst,
+                      'type':'append_rpc_response',
+                      'term':self.current_term,
+                      'prev_log_idx':len(self.log)-1,
+                      'success':False}
         # Update from heartbeat
         self.kick_clock()
-        # If this is the initial heartbeat after a leader election
-        if len(entries) == 0:
-            # then update leader
-            self.leader = leader
 
         # Case where current replica is in candidate mode and receives RPC from legitimate leader
         # Case where self is candidate and RPC term < current_term is covered in next if statement
@@ -228,66 +220,40 @@ class Server:
             self.switch_to_follower()
 
         # Terminating cases
-        # Case 1: leader's term < replica's term
-        # Case 2: No entry at prev_log_idx with term matching prev_log_term.
-        # Also checks that there is any entry at prev_log_idx
-        if prev_log_idx > 0:
-            if (term < self.current_term):
-                return_msg['fail_reason'] = 'wrong leader term'
-                self.send_message(return_msg)
-                return
-            elif self.log_get(prev_log_idx) and self.log_get(prev_log_idx)[0] != prev_log_term:
-                return_msg['fail_reason'] = 'mismatching terms'
-                self.send_message(return_msg)
-                return
+        if (term < self.current_term):
+            self.send_message(return_msg)
+            return
+
+        # Terminating case
+        # 2. No entry at prev_log_idx
+        # if prev_log_idx >= len(self.log)
+        # 3. Term at prev_log_idx does not match proposed term in entry coming from leader
+        # if self.log[prev_log_idx][0]
 
         # If there is data, loop through list of entries
         for i in range(len(entries)):
             new_entry = entries[i]
-            log_index = prev_log_idx + 1 + i
             if self.DEBUG:
                 print "follower new entry: " + str(new_entry)
             new_mid = new_entry[1].keys()[0]
-            # I think the new entries are supposed to start off at index prev_log_idx + 1?
-            # log_mids = [entry[1].keys()[0] for entry in self.log]
+            log_mids = [entry[1].keys()[0] for entry in self.log]
 
-            #3 Entry exists in replica's log but entry term != new_entry term 
-            if self.log_get(log_index):
-                if self.log_get(log_index)[0] != new_entry[0]:
-                    if self.DEBUG:
-                        print("\n{} CONCATENATING LOG. LOG_IDX({}). LOGTERM({}). NENTRY_TERM({})\n".format(self.my_id, log_index, self.log_get(log_index)[0], new_entry[0]))
-                    self.log = self.log_get(1, log_index) # Equivalent to log[:log_index]
-                    self.commit_index = len(self.log) # Better safe than sorry
-                    self.last_applied = len(self.log)
-            if not self.log_get(log_index):
-                #4
-                self.log.append(new_entry)
-                if self.DEBUG:
-                    print("{} APPEND {}. LOG = {}".format(self.my_id, new_entry, self.log))
+            if new_mid in log_mids and self.log[log_mids.index(new_mid)][0] != term: #3 - TODO not sure this is what it means
+                self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
+            #4
+            self.log.append(new_entry)
+            self.prev_log_term = term
 
             #5
             if leader_commit > self.commit_index:
-                self.commit_index = min(leader_commit, len(self.log)) # NOTE: Log is 1-indexed
+                self.commit_index = min(leader_commit, len(self.log)-1)
                 if self.DEBUG:
                     print "follower new index: " + str(self.commit_index)
-                # Format: (term, {MID:{key:value}})
-                # entry_to_commit = {key: value}
+                entry_to_commit = self.log[self.commit_index][1].values()[0]
+                self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
-                # Multiple entries to apply
-                # for i in range(self.commit_index - self.last_applied):
-                while self.last_applied < self.commit_index:
-                    log_entry = self.log_get(self.last_applied + 1)
-                    
-                    try:
-                        entry_to_commit = list(log_entry[1].values())[0]
-                        self.data[list(entry_to_commit.keys())[0]]=list(entry_to_commit.values())[0]
-                        self.last_applied = len(self.data)
-                    except TypeError:
-                        print("{} COMMIT INDEX = {}. LAST APPLIED = {}. i = {}. IDX CHECK = {}. ENTRY: {}".format(self.my_id, self.commit_index, self.last_applied, i, self.last_applied + 1 + i, log_entry)) 
 
-        # TODO: double check this implementation and see if we're sending all missing entries
-        # from prev_log_idx to leader's commitIndex
-        return_msg['prev_log_idx'] = len(self.log)
+        return_msg['prev_log_idx'] = len(self.log)-1
         return_msg['success'] = True
         self.send_message(return_msg)
 
@@ -297,27 +263,21 @@ class Server:
             prev_idx = msg_dict.get('prev_log_idx')
             # get quorum index
             self.match_indexes[dst] = prev_idx
-            q_index = int(math.ceil(float(len(self.replica_ids))/2.0))-1
-            self.commit_index = sorted(self.match_indexes.values())[q_index]
-            if self.DEBUG:
-                print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
-            # Update next_index
-            if msg_dict.get('success') and self.next_indexes[dst] != prev_idx + 1:
-                self.next_indexes[dst] = prev_idx + 1
+            # 1. Check the quorum threshold
+            # 2. Check the index where commit index should reach quorum
+            # 3. Verify there is actually quorum w/value at index
+            quorum_threshold = math.ceil(float(len(self.replica_ids))/2.0)
+            quorum_index = int(quorum_threshold)-1
+            sorted_match_indices = sorted(self.match_indexes.values())
+            if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
+                self.commit_index = sorted_match_indices[quorum_index]
                 if self.DEBUG:
-                    print("\n{} NEXT_IDX UPDATED TO {}".format(dst, prev_idx + 1))
+                    print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
-            # Need to send if self.log becomes longer than next_index for given host
-            if self.commit_index > prev_idx or not msg_dict.get('success'):
-                if not msg_dict.get('success'):
-                    self.next_indexes[dst] = max(1, self.next_indexes[dst] - 1)
-                if self.DEBUG:
-                    print("\n{} APPEND FAILURE: {}\n".format(dst, msg_dict.get('fail_reason')))
-                    print("{} NEXT_IDX DOWNGRADED TO {}".format(dst, self.next_indexes[dst]))
-                entries = self.log_get(self.next_indexes[dst], -1)
-                threading.Thread(target=self.append_entries_rpc, args=(dst,), kwargs={'entries':entries}).start()
+            if not msg_dict.get('success'):
+                entries = self.log[prev_idx+1:]
+                threading.Thread(target=self.append_entries_rpc, kwargs={"dst": dst,'entries':entries}).start()
                 return
-
 
     '''
     Request Vote RPC
@@ -377,7 +337,7 @@ class Server:
                     print("{}: IM THE LEADER!".format(self.my_id))
                 self.switch_to_leader()
                 for replica in self.replica_ids:
-                    threading.Thread(target=self.append_entries_rpc, args=(replica,), kwargs={'entries':[]}).start()
+                    threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[]}).start()
 
     def switch_to_candidate(self):
         self.current_state = "CANDIDATE"
@@ -404,13 +364,6 @@ class Server:
         self.leader = self.my_id
         self.current_state = "LEADER"
         self.last_heartbeat = time.time()
-        self.commit_index = len(self.log) # Leader sanity check. REMEMBER log is 1-indexed
-        # On election, update all follower indexes to log index then adjust from there
-        self.next_indexes = {rep:self.commit_index+1 for rep in self.replica_ids}
-        self.match_indexes = {rep:0 for rep in self.replica_ids}
-        if self.DEBUG:
-            print("\n{} IS LEADER. NEXT_INDEXES: {}".format(self.my_id, self.next_indexes))
-
 
     def is_leader(self):
         return self.current_state == "LEADER"
@@ -439,12 +392,12 @@ class Server:
             # TODO Only do this after getting a quorum
             self.data[key]=val
             for replica in self.replica_ids:
-                threading.Thread(target=self.append_entries_rpc, args=(replica,), kwargs={'entries':[new_entry]}).start()
+                threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
             ok_msg_dict = {'dst':msg_dict.get('src'),
                            'type':'ok',
                            'MID': mid}
             self.send_message(ok_msg_dict)
-        elif self.leader == '9999':
+        elif self.leader == 'FFFF':
             # fail
             mid = msg_dict.get('MID')
             fail_msg_dict = {'dst':msg_dict.get('src'),
