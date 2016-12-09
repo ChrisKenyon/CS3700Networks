@@ -174,10 +174,17 @@ class Server:
     Leader includes index and term of entry in log immediately preceding new entries (nextIndex - 1)
     '''
     def append_entries_rpc(self, entries = [], dst='FFFF'):
+        prev_log_index = self.next_indexes[dst] - 1
+        prev_log_term = self.current_term
+        if prev_log_index < len(self.log):
+            prev_log_term = self.log[self.next_indexes[dst]-1][0]
+        elif self.commit_index != len(self.log):
+            raise Exception("Mismatch Error. Commit index {} < log length {}".format(self.commit_index, len(self.log)))
+         
         message = {'src':self.my_id,'dst':dst,'type':'append_entries_rpc',
                    'term':self.current_term,
-                   'prev_log_idx': self.next_indexes[dst] - 1,
-                   'prev_log_term': self.log[self.next_indexes[dst] - 2][0],
+                   'prev_log_idx':prev_log_index,
+                   'prev_log_term':prev_log_term,
                 #    'prev_log_idx':len(self.log)-1,
                 #    'prev_log_term':self.log[-1][0],
                    'entries':entries,
@@ -212,7 +219,7 @@ class Server:
         return_msg = {'dst':dst,
                       'type':'append_rpc_response',
                       'term':self.current_term,
-                      'prev_log_idx':len(self.log)-1,
+                      'prev_log_idx':len(self.log),
                       'success':False}
         # Update from heartbeat
         self.kick_clock()
@@ -252,10 +259,13 @@ class Server:
                 self.commit_index = min(leader_commit, len(self.log)-1)
                 if self.DEBUG:
                     print str(self.my_id) + " Follower new index: " + str(self.commit_index)
-                entry_to_commit = self.log[self.commit_index][1].values()[0]
-                self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
+                try:
+                    entry_to_commit = self.log[self.commit_index][1].values()[0]
+                    self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
+                except IndexError:
+                    print("{}. COMMIT_IDX = {}. LEADER_COMMIT = {}, LOGLEN = {}".format(self.my_id, self.commit_index, leader_commit, len(self.log)))
 
-        return_msg['prev_log_idx'] = max(0, len(self.log)-1)
+        return_msg['prev_log_idx'] = len(self.log)
         return_msg['success'] = True
         self.send_message(return_msg)
 
