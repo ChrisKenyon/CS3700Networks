@@ -6,8 +6,9 @@ import sys, socket, select, time, json, random
 class Server:
     def __init__(self,my_id,replicas):
 
-        self.DEBUG = True
+        self.DEBUG = False
         self.ALL_MSGS = False
+        self.PRINT_LOGS = False
 
         self.my_id = my_id
         self.replica_ids = replicas
@@ -38,7 +39,7 @@ class Server:
         # log entries - contains collections of command for state machine, term when received
         # 1-indexed.   Format: (term, {MID:{key:value}})
         # this format is tentative, but should work as just data considering we only get and put, no delete and etc.
-        self.log = [(1,{1:{None:None}})]
+        self.log = [(1,{'INIT':{None:None}})]
 
         ##### Volatile States #####
         # highest known log entry committed (default 0)
@@ -256,6 +257,8 @@ class Server:
                 self.log = self.log[:log_mids.index(new_mid)] #delete entry and all following
             #4
             self.log.append(new_entry)
+            if self.PRINT_LOGS:
+                print self.my_id + ": " + str([(l[0],l[1].keys()[0][:3]) for l in self.log]) + '\n' + str(leader_commit) + ' / ' + str(self.commit_index)
             self.prev_log_term = term
 
             #5
@@ -414,6 +417,8 @@ class Server:
             val = msg_dict.get('value')
             new_entry = (self.current_term,{mid:{key:val}})
             self.log.append(new_entry)
+            if self.PRINT_LOGS:
+                print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
             # TODO Only do this after getting a quorum?
             self.data[key]=val
             for replica in self.replica_ids:
