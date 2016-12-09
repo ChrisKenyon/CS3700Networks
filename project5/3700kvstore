@@ -256,7 +256,7 @@ class Server:
                     print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
             if not msg_dict.get('success'):
-                entries = self.log[prev_idx+1:]
+                entries = self.log[prev_idx+1:prev_idx+100] # Entries as a string is about 100 chars long which will mess up reading by fixed number of bytes. so let's segment for crash tests when a log can fall way behind
                 threading.Thread(target=self.append_entries_rpc, kwargs={"dst": dst,'entries':entries}).start()
                 return
 
@@ -285,7 +285,8 @@ class Server:
         last_log_term = msg_dict.get('last_log_term')
         dst = msg_dict.get('src')
 
-        grant = term >= self.current_term and last_log_index >= len(self.log) and last_log_term >= self.log[-1][0]
+        grant = term >= self.current_term and last_log_index >= len(self.log) and last_log_term >= self.log[-1][0] and not self.voted_this_term
+
         if term > self.current_term:
             self.update_term(term)
             self.kick_clock()
@@ -293,7 +294,6 @@ class Server:
         self.vote(grant, dst, dst, term)
 
     def vote(self, grant, dst, candidate_id, term):
-        grant = grant and not self.voted_this_term
         message = {'dst': dst,
                    'type': 'vote',
                    'term': term, # No spec on this. I think it makes sense for the vote to include the requested term (to indicate requestor and receiver are talking about the same term)
@@ -364,7 +364,7 @@ class Server:
             val = msg_dict.get('value')
             new_entry = (self.current_term,{mid:{key:val}})
             self.log.append(new_entry)
-            # TODO Only do this after getting a quorum
+            # TODO Only do this after getting a quorum?
             self.data[key]=val
             for replica in self.replica_ids:
                 threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
@@ -383,6 +383,20 @@ class Server:
             self.redirect(msg_dict)
 
     def handle_get(self,msg_dict):
+        #TODO not sure if gets should have redirects. There is a fail condition where a replica will respond with an out of date value in the data dictionary
+        '''
+        if self.leader == 'FFFF':
+            # fail
+            mid = msg_dict.get('MID')
+            fail_msg_dict = {'dst':msg_dict.get('src'),
+                           'type':'fail',
+                           'MID': mid}
+            self.send_message(fail_msg_dict)
+        elif not self.is_leader():
+            self.redirect(msg_dict)
+            return
+        '''
+
         if self.DEBUG:
             print("Get received: "+str(msg_dict))
         mid = msg_dict.get('MID')
