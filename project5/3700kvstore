@@ -54,7 +54,7 @@ class Server:
 
         # the data to store after commiting
         self.data = {}
-        self.leader = '9999' # TODO this is an indicator for now to say there's no leader at start
+        self.leader = 'FFFF' # TODO this is an indicator for now to say there's no leader at start
 
     def send_message(self, msg_dict, print_msg=None):
         if self.DEBUG and print_msg:
@@ -181,6 +181,8 @@ class Server:
         term = msg_dict.get('term')
         dst = msg_dict.get('src')
         leader = msg_dict.get('leader')
+        if self.leader == 'FFFF':
+            self.leader = leader
         prev_log_idx = msg_dict.get('prev_log_idx')
         prev_log_term = msg_dict.get('prev_log_term')
         entries = msg_dict.get('entries')
@@ -192,10 +194,6 @@ class Server:
                       'success':False}
         # Update from heartbeat
         self.kick_clock()
-        # If this is the initial heartbeat after a leader election
-        if len(entries) == 0:
-            # then update leader
-            self.leader = leader
 
         # Case where current replica is in candidate mode and receives RPC from legitimate leader
         # Case where self is candidate and RPC term < current_term is covered in next if statement
@@ -203,9 +201,15 @@ class Server:
             self.switch_to_follower()
 
         # Terminating cases
-        if (term < self.current_term):# TODO need to figure this out... or len(self.log)<=prev_log_idx or (self.log[prev_log_idx][0] != prev_log_term): #1 & 2
+        if (term < self.current_term):
             self.send_message(return_msg)
             return
+
+        # Terminating case
+        # 2. No entry at prev_log_idx
+        # if prev_log_idx >= len(self.log)
+        # 3. Term at prev_log_idx does not match proposed term in entry coming from leader
+        # if self.log[prev_log_idx][0]
 
         # If there is data, loop through list of entries
         for i in range(len(entries)):
@@ -368,7 +372,7 @@ class Server:
                            'type':'ok',
                            'MID': mid}
             self.send_message(ok_msg_dict)
-        elif self.leader == '9999':
+        elif self.leader == 'FFFF':
             # fail
             mid = msg_dict.get('MID')
             fail_msg_dict = {'dst':msg_dict.get('src'),
