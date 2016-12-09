@@ -271,7 +271,11 @@ class Server:
             # 3. Verify there is actually quorum w/value at index
             quorum_threshold = math.ceil(float(len(self.replica_ids))/2.0)
             quorum_index = int(quorum_threshold)-1
-            sorted_match_indices = sorted(self.match_indexes.values())
+            # TODO: Verify. We want a chance for commit_index to go high vs low (read: case where even # of replicas)
+            # I think this is true bc leader should be most up to date and leader will opt for high
+            # Otherwise 2 failed replicas stuck at low while the other 2 are incrementing high will keep leader at low
+            # even though the 2 high will make quorum (situation where 5 nodes)
+            sorted_match_indices = sorted(self.match_indexes.values(), reverse=True)
             if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
                 self.commit_index = sorted_match_indices[quorum_index]
                 if self.DEBUG:
