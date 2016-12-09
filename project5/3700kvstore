@@ -8,6 +8,7 @@ class Server:
 
         #self.DEBUG = True
         self.DEBUG = False
+        self.ALL_MSGS = False
 
         self.my_id = my_id
         self.replica_ids = replicas
@@ -20,12 +21,12 @@ class Server:
         # Current state. Default to follower
         self.switch_to_follower()
 
+        self.sock_lock = threading.Lock()
         ##### Election ######
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
         self.election_timeout = random.randrange(150,300) * 0.01
-        self.heartbeat_timeout = 0.025 # 25 milliseconds
-        self.elect_lock = threading.Lock()
+        self.heartbeat_timeout = 0.1 # 100 milliseconds
         self.votes_received = []
         self.voted_this_term = False
 
@@ -61,9 +62,10 @@ class Server:
             print(print_msg)
         msg_dict.update({'leader':self.leader})
         msg_dict.update({'src':self.my_id})
-        if self.DEBUG:
+        if self.DEBUG and self.ALL_MSGS:
             print("{}: Sending: {}".format(self.my_id,str(msg_dict)))
-        self.sock.send(json.dumps(msg_dict))
+        with self.sock_lock:
+            self.sock.send(json.dumps(msg_dict))
 
     def kick_clock(self):
         self.last_timeout_time = time.time()
@@ -74,7 +76,8 @@ class Server:
         while True:
             ready = select.select([self.sock], [], [], 0.1)[0]
             if self.sock in ready:
-                msg_raw = self.sock.recv(32768)
+                with self.sock_lock:
+                    msg_raw = self.sock.recv(32768)
                 if len(msg_raw) == 0: continue
                 self.handle_message(msg_raw)
 
@@ -86,7 +89,7 @@ class Server:
                 if clock - self.last_heartbeat > self.heartbeat_timeout:
                     # TODO make this where any put requests are sent from. The leader should probably have a request buffer sent rather than just this empty list
                     for replica in self.replica_ids:
-                        threading.Thread(target=self.request_vote_rpc, args=(self.current_term, len(self.log), self.log[-1][0]), kwargs={"dst": replica}).start()
+                        self.append_entries_rpc(dst = replica, entries=self.log[self.match_indexes[replica]+1:])
                     self.last_heartbeat = time.time()
             # Election clock timeout
             elif clock-self.last_timeout_time > self.election_timeout:
@@ -215,7 +218,7 @@ class Server:
         for i in range(len(entries)):
             new_entry = entries[i]
             if self.DEBUG:
-                print "follower new entry: " + str(new_entry)
+                print str(self.my_id) +" Follower new entry: " + str(new_entry)
             new_mid = new_entry[1].keys()[0]
             log_mids = [entry[1].keys()[0] for entry in self.log]
 
@@ -229,7 +232,7 @@ class Server:
             if leader_commit > self.commit_index:
                 self.commit_index = min(leader_commit, len(self.log)-1)
                 if self.DEBUG:
-                    print "follower new index: " + str(self.commit_index)
+                    print str(self.my_id) +" Follower new index: " + str(self.commit_index)
                 entry_to_commit = self.log[self.commit_index][1].values()[0]
                 self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
@@ -253,7 +256,7 @@ class Server:
             if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
                 self.commit_index = sorted_match_indices[quorum_index]
                 if self.DEBUG:
-                    print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
+                    print str(self.my_id)+" Leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
             if not msg_dict.get('success'):
                 entries = self.log[prev_idx+1:prev_idx+100] # Entries as a string is about 100 chars long which will mess up reading by fixed number of bytes. so let's segment for crash tests when a log can fall way behind
@@ -366,8 +369,9 @@ class Server:
             self.log.append(new_entry)
             # TODO Only do this after getting a quorum?
             self.data[key]=val
-            for replica in self.replica_ids:
-                threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
+            #for replica in self.replica_ids:
+            #    threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
+            #self.last_heartbeat = time.time()
             ok_msg_dict = {'dst':msg_dict.get('src'),
                            'type':'ok',
                            'MID': mid}
@@ -423,7 +427,7 @@ class Server:
                        'vote':self.handle_vote,
                        'put':self.handle_put,
                        'get':self.handle_get,}
-        if self.DEBUG:
+        if self.DEBUG and self.ALL_MSGS:
             print("{}: Received message: {}".format(self.my_id,message))
         msg_dict = json.loads(message)
         if msg_dict.get('dst') in (self.my_id, 'FFFF'):
