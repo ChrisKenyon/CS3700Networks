@@ -414,6 +414,19 @@ class Server:
                           'MID':msg_dict.get('MID')}
         self.send_message(redir_msg_dict)
 
+    def put_thread(self, mid, key, val):
+        new_entry = (self.current_term,{mid:{key:val}})
+        self.log.append(new_entry)
+        self.commit_index = len(self.log)
+        if self.PRINT_LOGS:
+            print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
+
+        # # TODO Only do this after getting a quorum?
+        self.data[key]=val
+        for replica in self.replica_ids:
+            threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
+        return
+
     def handle_put(self,msg_dict):
         mid = msg_dict.get('MID')
         key = msg_dict.get('key')
@@ -429,16 +442,7 @@ class Server:
             return
         # TODO Remove this and put it in the timeout. implement some buffer here?
         elif self.is_leader():
-            new_entry = (self.current_term,{mid:{key:val}})
-            self.log.append(new_entry)
-            self.commit_index = len(self.log)
-            if self.PRINT_LOGS:
-                print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
-
-            # # TODO Only do this after getting a quorum?
-            self.data[key]=val
-            for replica in self.replica_ids:
-                threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
+            threading.Thread(target=self.put_thread, args=(mid, key, val)).start()
             return_msg.update({'type': 'ok'})
 
         self.send_message(return_msg)
