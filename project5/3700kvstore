@@ -301,10 +301,6 @@ class Server:
             sorted_match_indices = sorted(self.match_indexes.values(), reverse=True)
             if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
                 self.last_applied = sorted_match_indices[quorum_index]
-                # Get key, value pair in log. Format: (term, {MID:{key:value}})
-                kv_pair = list(self.log[self.last_applied][1].values())[0]
-                # Commit to data
-                self.data[list(kv_pair.keys())[0]] = list(kv_pair.values())[1]
                 if self.DEBUG:
                     print("{}. Leader commit index {}. last-applied index {}. match_indexes: {}".format(self.my_id, self.commit_index, self.last_applied, self.match_indexes))
             # Handle a follower who is behind in log entries
@@ -398,7 +394,9 @@ class Server:
         self.leader = self.my_id
         self.current_state = "LEADER"
         self.last_heartbeat = time.time()
+        self.commit_index = len(self.log)
         self.next_indexes = {rep:self.commit_index + 1 for rep in self.replica_ids}
+        self.match_indexes = {rep:0 for rep in self.replica_ids}
 
     def is_leader(self):
         return self.current_state == "LEADER"
@@ -409,7 +407,9 @@ class Server:
 
 
     def redirect(self,msg_dict):
-        redir_msg_dict = {'dst':msg_dict.get('src'),
+        redir_msg_dict = {'src':self.my_id,
+                          'dst':msg_dict.get('src'),
+                          'leader':self.leader,
                           'type':'redirect',
                           'MID':msg_dict.get('MID')}
         self.send_message(redir_msg_dict)
@@ -424,8 +424,8 @@ class Server:
         if self.DEBUG:
             print("Put received: "+str(msg_dict))
 
-        if not self.is_leader and self.leader != 'FFFF':
-            self.redirect()
+        if not self.is_leader() and self.leader != 'FFFF':
+            self.redirect(msg_dict)
             return
         # TODO Remove this and put it in the timeout. implement some buffer here?
         elif self.is_leader():
@@ -436,7 +436,7 @@ class Server:
                 print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
 
             # # TODO Only do this after getting a quorum?
-            # self.data[key]=val
+            self.data[key]=val
             for replica in self.replica_ids:
                 threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
             return_msg.update({'type': 'ok'})
