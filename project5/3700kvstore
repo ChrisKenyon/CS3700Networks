@@ -88,7 +88,7 @@ class Server:
                 if clock - self.last_heartbeat > self.heartbeat_timeout:
                     # TODO make this where any put requests are sent from. The leader should probably have a request buffer sent rather than just this empty list
                     for replica in self.replica_ids:
-                        self.append_entries_rpc(dst= replica, entries=[])
+                        threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica,'entries':[]}).start()
                     self.last_heartbeat = time.time()
             # Election clock timeout
             elif clock-self.last_timeout_time > self.election_timeout:
@@ -193,7 +193,7 @@ class Server:
                    'leader_commit':self.commit_index}
 
         if self.DEBUG:
-            print "sending new entry: "+str(entries)
+            print "sending new entry to {}: {}".format(dst, entries)
 
         self.send_message(message)
 
@@ -297,9 +297,9 @@ class Server:
             # even though the 2 high will make quorum (situation where 5 nodes)
             sorted_match_indices = sorted(self.match_indexes.values(), reverse=True)
             if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
-                self.commit_index = sorted_match_indices[quorum_index]
+                self.last_applied = sorted_match_indices[quorum_index]
                 if self.DEBUG:
-                    print str(self.my_id)+" Leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
+                    print("{}. Leader commit index {}. last-applied index {}. match_indexes: {}".format(self.my_id, self.commit_index, self.last_applied, self.match_indexes))
             # Handle a follower who is behind in log entries
             if not msg_dict.get('success'):
                 entries = self.log[prev_idx+1:prev_idx+100] # Entries as a string is about 100 chars long which will mess up reading by fixed number of bytes. so let's segment for crash tests when a log can fall way behind
@@ -417,6 +417,7 @@ class Server:
             val = msg_dict.get('value')
             new_entry = (self.current_term,{mid:{key:val}})
             self.log.append(new_entry)
+            self.commit_index = len(self.log)
             if self.PRINT_LOGS:
                 print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
             # TODO Only do this after getting a quorum?
