@@ -7,6 +7,7 @@ class Server:
     def __init__(self,my_id,replicas):
 
         self.DEBUG = False
+        self.ALL_MSGS = False
 
         self.my_id = my_id
         self.replica_ids = replicas
@@ -61,7 +62,7 @@ class Server:
             print(print_msg)
         msg_dict.update({'leader':self.leader})
         msg_dict.update({'src':self.my_id})
-        if self.DEBUG:
+        if self.DEBUG and self.ALL_MSGS:
             print("{}: Sending: {}".format(self.my_id,str(msg_dict)))
         self.sock.send(json.dumps(msg_dict))
 
@@ -236,7 +237,7 @@ class Server:
         for i in range(len(entries)):
             new_entry = entries[i]
             if self.DEBUG:
-                print "follower new entry: " + str(new_entry)
+                print str(self.my_id) + " Follower new entry: " + str(new_entry)
             new_mid = new_entry[1].keys()[0]
             log_mids = [entry[1].keys()[0] for entry in self.log]
 
@@ -250,7 +251,7 @@ class Server:
             if leader_commit > self.commit_index:
                 self.commit_index = min(leader_commit, len(self.log)-1)
                 if self.DEBUG:
-                    print "follower new index: " + str(self.commit_index)
+                    print str(self.my_id) + " Follower new index: " + str(self.commit_index)
                 entry_to_commit = self.log[self.commit_index][1].values()[0]
                 self.data[entry_to_commit.keys()[0]]=entry_to_commit.values()[0]
 
@@ -274,7 +275,7 @@ class Server:
             if sorted_match_indices.count(sorted_match_indices[quorum_index]) >= quorum_threshold:
                 self.commit_index = sorted_match_indices[quorum_index]
                 if self.DEBUG:
-                    print "leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
+                    print str(self.my_id)+" Leader index: " + str(self.commit_index) + " " + str(self.match_indexes)
             # Handle a follower who is behind in log entries
             if not msg_dict.get('success'):
                 entries = self.log[prev_idx+1:prev_idx+100] # Entries as a string is about 100 chars long which will mess up reading by fixed number of bytes. so let's segment for crash tests when a log can fall way behind
@@ -451,7 +452,7 @@ class Server:
                        'vote':self.handle_vote,
                        'put':self.handle_put,
                        'get':self.handle_get,}
-        if self.DEBUG:
+        if self.DEBUG and self.ALL_MSGS:
             print("{}: Received message: {}".format(self.my_id,message))
         msg_dict = json.loads(message)
         if msg_dict.get('dst') in (self.my_id, 'FFFF'):
