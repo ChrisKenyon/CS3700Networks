@@ -212,8 +212,6 @@ class Server:
         term = msg_dict.get('term')
         dst = msg_dict.get('src')
         leader = msg_dict.get('leader')
-        if self.leader == 'FFFF':
-            self.leader = leader
         prev_log_idx = msg_dict.get('prev_log_idx')
         prev_log_term = msg_dict.get('prev_log_term')
         entries = msg_dict.get('entries')
@@ -230,6 +228,11 @@ class Server:
         # Case where self is candidate and RPC term < current_term is covered in next if statement
         if self.is_candidate() and term >= self.current_term:
             self.switch_to_follower()
+
+        if not self.is_leader() and self.leader != leader:
+            self.leader = leader
+            if self.DEBUG:
+                print("{} knows leader is {}".format(self.my_id, leader))
 
         # Terminating cases
         if (term < self.current_term):
@@ -440,32 +443,22 @@ class Server:
 
     def handle_get(self,msg_dict):
         #TODO not sure if gets should have redirects. There is a fail condition where a replica will respond with an out of date value in the data dictionary
-        if self.leader == 'FFFF':
-            # fail
-            mid = msg_dict.get('MID')
-            fail_msg_dict = {'dst':msg_dict.get('src'),
-                           'type':'fail',
-                           'MID': mid}
-            self.send_message(fail_msg_dict)
-        elif not self.is_leader():
-            self.redirect(msg_dict)
-            return
-
-        if self.DEBUG:
-            print("Get received: "+str(msg_dict))
         mid = msg_dict.get('MID')
         key = msg_dict.get('key')
-        if key in self.data:
-            ok_msg_dict = {'dst':msg_dict.get('src'),
-                           'type':'ok',
-                           'MID': mid,
-                           'value':self.data[key]}
-            self.send_message(ok_msg_dict)
-        else:
-            fail_msg_dict = {'dst':msg_dict.get('src'),
-                             'type':'fail',
-                             'MID': mid}
-            self.send_message(fail_msg_dict)
+        return_msg = {'dst':msg_dict.get('src'),
+                    'type':'fail',
+                    'MID': mid}
+        if self.DEBUG:
+            print("Get received: "+str(msg_dict))
+
+        # If leader is unknown, default failure return msg is sent
+        if not self.is_leader() and self.leader != 'FFFF':
+            self.redirect(msg_dict)
+            return
+        elif self.data.get(key):
+            return_msg.update({'type': 'ok', 'value': self.data[key]})
+
+        self.send_message(return_msg)
 
     '''
         Handler
