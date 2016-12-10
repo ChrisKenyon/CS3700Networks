@@ -24,7 +24,7 @@ class Server:
         ##### Election ######
         # Election timeout. Begin election.
         # Raft paper/vid seemed to indicate timeout of 150-300ms was good range to avoid split votes
-        self.election_timeout = random.randrange(150,300) * 0.01 # TODO play with times, we're doing 1.5-3 s and 250milli for heartbeat
+        self.election_timeout = random.randrange(50,200) * 0.01 # TODO play with times, we're doing 1.5-3 s and 250milli for heartbeat
         self.heartbeat_timeout = 0.25 # 25 milliseconds
         self.elect_lock = threading.Lock()
         self.supporters = []
