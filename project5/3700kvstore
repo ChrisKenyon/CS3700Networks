@@ -61,8 +61,8 @@ class Server:
     def send_message(self, msg_dict, print_msg=None):
         if self.DEBUG and print_msg:
             print(print_msg)
-        msg_dict.update({'leader':self.leader})
-        msg_dict.update({'src':self.my_id})
+        msg_dict['leader'] = self.leader
+        msg_dict['src'] = self.my_id
         if self.DEBUG and self.ALL_MSGS:
             print("{}: Sending: {}".format(self.my_id,str(msg_dict)))
         self.sock.send(json.dumps(msg_dict))
@@ -414,19 +414,6 @@ class Server:
                           'MID':msg_dict.get('MID')}
         self.send_message(redir_msg_dict)
 
-    def put_thread(self, mid, key, val):
-        new_entry = (self.current_term,{mid:{key:val}})
-        self.log.append(new_entry)
-        self.commit_index = len(self.log)
-        if self.PRINT_LOGS:
-            print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
-
-        # # TODO Only do this after getting a quorum?
-        self.data[key]=val
-        for replica in self.replica_ids:
-            threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica, 'entries':[new_entry]}).start()
-        return
-
     def handle_put(self,msg_dict):
         mid = msg_dict.get('MID')
         key = msg_dict.get('key')
@@ -442,8 +429,19 @@ class Server:
             return
         # TODO Remove this and put it in the timeout. implement some buffer here?
         elif self.is_leader():
-            threading.Thread(target=self.put_thread, args=(mid, key, val)).start()
-            return_msg.update({'type': 'ok'})
+            # threading.Thread(target=self.put_thread, args=(mid, key, val)).start()
+            new_entry = (self.current_term,{mid:{key:val}})
+            self.log.append(new_entry)
+            self.commit_index = len(self.log)
+            if self.PRINT_LOGS:
+                print "Leader Log: " + str([(l[0],l[1].keys()[0][:3]) for l in self.log])
+
+            # # TODO Only do this after getting a quorum?
+            self.data[key]=val
+            # This loop causes latency. Leave updates to heartbeat/append_entries_rpc handler
+            # for replica in self.replica_ids:
+            #     threading.Thread(target=self.append_entries_rpc, kwargs={"dst": replica,
+            return_msg['type'] = 'ok'
 
         self.send_message(return_msg)
 
@@ -462,7 +460,8 @@ class Server:
             self.redirect(msg_dict)
             return
         elif self.is_leader() and self.data.get(key):
-            return_msg.update({'type': 'ok', 'value': self.data[key]})
+            return_msg['type'] = 'ok'
+            return_msg['value'] = self.data[key]
 
         self.send_message(return_msg)
 
