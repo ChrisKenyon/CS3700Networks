@@ -36,14 +36,13 @@ class PacketSender:
         self.msg_buffer = {} #{seq #: [inflight, data]}
         self.msg_time = {}
         self.rtt = 2.0
-        self.eof_data_seq = -1
         ## DEBUG ##
         self.inflight = 0
 
     def estimate_rtt(self, old_rtt, new_rtt, alpha=0.875):
         log('updating rtt {} with new rtt {}'.format(old_rtt,new_rtt))
         new_rtt = (alpha * old_rtt) + (1.0 - alpha) * new_rtt
-        return max(min(1.1,new_rtt),0.005)
+        return new_rtt
 
     # helper function to send packets. Ideally this will move some code out of
     # send_next_packet so handshake and send_next_packet share the same sending code.
@@ -75,7 +74,7 @@ class PacketSender:
         self.sequence = self.initial_seq
         # TODO figure out good timeout val for handshake
         # should it be getting a rtt time??
-        self.sock.settimeout(1.5)
+        self.sock.settimeout(2.0)
         start = time.time()
         offer_hand = self.send_packet(None, **{"syn": True}) #Initial SYN to receiver
         try:
@@ -110,7 +109,6 @@ class PacketSender:
 
 
     def load_next_packet(self, num_packets):
-        eof = False
         for i in range(num_packets):
             data = sys.stdin.read(DATA_SIZE)
             if (len(data) > 0):
@@ -121,19 +119,15 @@ class PacketSender:
                         if add:
                             data += add
                         else:
-                            eof = True
+                            #eof = True
                             break
                     data += sys.stdin.read(MSG_SIZE-len(compress(data))-HEADER_LEN)
-                else:
-                    eof = True
 
                 self.sequence += len(data)
-                if eof:
-                    self.eof_data_seq = self.sequence
                 msg_dict = {
                     "sequence": self.sequence,
                     "data": data,
-                    "eof": eof
+                    "eof": False, #eof
                     }
                 #debug
                 msg_dict['crc'] = sum([crc32(str(val)) for key,val in msg_dict.iteritems()])
@@ -235,6 +229,13 @@ class PacketSender:
                     self.msg_buffer[seq][0] = False
 
                 log("[timeout] msg_buffer: {}".format([[key, value[0]] for key, value in self.msg_buffer.items()]))
+
+                # if len(self.msg_time)>0:
+                #     seq = sorted(self.msg_time)[0]
+                #     new_rtt =  time.time() - self.msg_time[seq]
+                #     self.msg_time[seq] = time.time()
+                #     self.rtt = self.estimate_rtt(self.rtt, new_rtt)
+                #
                 if len(self.msg_buffer)==0:
                     self.load_next_packet(1)
                 self.send_next_packet()

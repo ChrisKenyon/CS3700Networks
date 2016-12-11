@@ -20,6 +20,12 @@ PROFILE_URL = BASE_URL+'fakebook/'
 LOGIN_URL = BASE_URL+'accounts/login/?next=/fakebook/'
 CRLF = '\r\n'
 
+MAX_THREADS = 80
+####
+import pdb
+####
+
+
 class WebCrawler:
 
     def __init__(self):
@@ -27,13 +33,10 @@ class WebCrawler:
         self.token=''
         self.session=''
 
-    def handle_status(self, url, headers):
+    def handle_redirect(self, headers):
         # Handle 301 and 302 code redirects
-        if headers.get("statuscode") in [301, 302] and headers.get("Location"):
+        if headers.get("Location"):
             return self.GET(headers["Location"])
-        # Handle 500
-        if headers.get("statuscode") == 500:
-            return self.GET(url)
         return headers, None
 
     def parse_headers(self, data):
@@ -114,7 +117,7 @@ class WebCrawler:
                        #'Accept-Encoding: gzip, deflate, sdch'+\
         request+='\n\r\n'
         data, sock = self.request(host, request)
-        sock.settimeout(0.02)
+        sock.settimeout(0.2)
         while True:
             init_length = len(data)
             try:
@@ -126,11 +129,6 @@ class WebCrawler:
 
         sock.close()
         headers = self.parse_headers(data)
-        tries = 10 # Loop breaker
-        while headers.get("statuscode") != 200 and tries > 0:
-            headers, newdata = self.handle_status(url, headers)
-            data = newdata if newdata else data #handle_status will return data None if status not supported
-            tries -= 1
         return headers, data
 
     def POST(self,url, **kwargs):
@@ -165,24 +163,24 @@ class WebCrawler:
               "Cookie: {}\n\n".format(" ".join(["{}={};".format(key, value) for key, value in self.cookie.items()]))
         msg+=content+CRLF
 
+        #print(msg)
         data, sock = self.request(host, msg)
         sock.close()
         headers = self.parse_headers(data)
-        if headers.get("statuscode") in [301, 302]:
-            headers, data = self.GET(headers.get("Location"))
-        if headers.get("statuscode") not in [200, 301, 302]:
-            print("POST ERROR: {}".format(headers.get("status")))
-            sys.exit()
 
         return headers, data
 
     def fb_login(self,user,pwd):
         headers, data = self.GET(LOGIN_URL)
-        self.main_page = self.POST(LOGIN_URL,
+        postheaders, postdata = self.POST(LOGIN_URL,
                   username=user,
                   password=pwd,
                   next='%2Ffakebook%2F',
                   csrfmiddlewaretoken=self.token)
+        #print("POST RESPONSE")
+        #print(postdata)
+        # TODO handling redirects should be built into GET for the 301 and 302 response codes rather than here
+        self.main_page = self.GET(postheaders['Location']) if 'Location' in postheaders else "No main page"
 
     def queue_ids(self, html):
        for id in [link.group(2) for link in re.finditer('(href="/fakebook/(\d+?)/")+',html)]:
@@ -227,16 +225,18 @@ class WebCrawler:
             pass
 
     def crawl(self):
+        #print("MAIN PAGE: ")
+        #print(self.main_page)
+
         self.bfs_queue = Queue()
         self.secret_flags = []
         self.visited = {}
         # get my friend ids
         self.queue_ids(self.main_page[1])
         while (len(self.secret_flags)<5):
-            try:
+            if threading.activeCount() < MAX_THREADS:
                 threading.Thread(target=self.search_next).start()
-                continue
-            except:
+            else:
                 self.search_next()
         for flag in self.secret_flags:
             print(flag)

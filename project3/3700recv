@@ -16,7 +16,6 @@ AWINDOW = 10 #advertised window
 
 msg_buff = {} #{ seq #, data }
 latest_seq_in_order = 0
-syn_seq = 0
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
 
@@ -33,7 +32,7 @@ def check_buff():
             log("[PRINTING FROM BUFF] " + str(seq) + " (" + str(len(data)) + ")")
             sys.stdout.write(data)
             # also manage the buffer size by deleting any that have already been written
-            msg_buff.pop(seq-length)
+            msg_buff.pop(latest_seq_in_order)
             # and the latest can only move by having the next sequence packet
             latest_seq_in_order = seq
 
@@ -47,7 +46,6 @@ if __name__=='__main__':
     UDP_PORT = sock.getsockname()[1]
     log("[bound] " + str(UDP_PORT))
 
-    end_of_data_found = False
     while True:
         result = sock.recvfrom(MSG_SIZE)
         # If nothing is ready, we hit the timeout
@@ -67,12 +65,10 @@ if __name__=='__main__':
                 calc_crc = sum([crc32(str(val)) for key,val in decoded.iteritems()])
                 if recv_crc != calc_crc:
                     log("crc mismatch: {} received and {} generated".format(recv_crc,calc_crc))
-                    '''
                     msg = json.dumps({"nack": decoded['sequence']})
                     log("ABOUT TO SEND " + msg)
                     if sock.sendto(msg, addr) < len(msg):
                         log("[error] unable to fully send packet")
-                    '''
                     continue
 
             if (decoded.get('syn')):
@@ -84,49 +80,36 @@ if __name__=='__main__':
                     continue
 
                 # second message of handshake
-                syn_seq = decoded['sequence']+2
-                msg_buff[syn_seq] = ''
                 msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1, "adv_window": AWINDOW})
-            # If there is data, we accept it and print it out
-            elif (decoded.get('data')):
-                seq = decoded.get('sequence')
-                if latest_seq_in_order == 0:
-                    # we never successfully got the third part of the handshake before starting to get data
-                    # msg = json.dumps({"syn":False})
-                    msg_buff[seq]=decoded['data']
-                    # if this is the first data packet
-                    if seq-len(decoded['data'])==syn_seq:
-                        latest_seq_in_order=syn_seq
-                        log('[handshake] complete through data at SEQ#{}'.format(seq))
-                        check_buff()
-                #elif latest_seq_in_order != seq - len(decoded['data']):
-                #    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
-                #else:
-                # Send back an ack to the sender
-                msg = json.dumps({"ack": decoded['sequence'], "sequence": seq, "adv_window": AWINDOW})
-                # ignore duplicates
-                # TODO watch out for wraparound here.. also implement wraparound??
-                if not (seq in msg_buff or seq<= latest_seq_in_order):
-                    msg_buff[seq]=decoded['data']
-                    if decoded.get('eof'):
-                        end_of_data_found = True
-                    check_buff()
             # If the EOF flag is set, exit
             elif (decoded.get('eof')):
                 check_buff()
-                if len(msg_buff)>1 or not end_of_data_found:
+                if len(msg_buff)>1:
                     # ask for the next message if we didn't get the end
-                    '''
                     msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
                     sock.sendto(msg, addr)
-                    '''
                     continue
 
                 msg = json.dumps({"fin": True})
                 sock.sendto(msg,addr)
                 log("[completed]")
                 sys.exit(0)
-
+            # If there is data, we accept it and print it out
+            elif (decoded.get('data')):
+                seq = decoded.get('sequence')
+                if latest_seq_in_order == 0:
+                    # we never successfully got the third part of the handshake before starting to get data
+                    msg = json.dumps({"syn":False})
+                #elif latest_seq_in_order != seq - len(decoded['data']):
+                #    msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
+                else:
+                    # Send back an ack to the sender
+                    msg = json.dumps({"ack": decoded['sequence'], "sequence": seq, "adv_window": AWINDOW})
+                    # ignore duplicates
+                    # TODO watch out for wraparound here.. also implement wraparound??
+                    if not (seq in msg_buff or seq<= latest_seq_in_order):
+                        msg_buff[decoded['sequence']]=decoded['data']
+                        check_buff()
             log("ABOUT TO SEND " + msg)
             if sock.sendto(msg, addr) < len(msg):
                 log("[error] unable to fully send packet")
@@ -136,7 +119,7 @@ if __name__=='__main__':
             log(str(e))
             msg = json.dumps({"nack": latest_seq_in_order+len(msg_buff[latest_seq_in_order])})
             if sock.sendto(msg, addr) < len(msg):
-                pass
+                raise e
     else:
         log("[error] timeout")
         sys.exit(-1)
