@@ -16,7 +16,6 @@ AWINDOW = 10 #advertised window
 
 msg_buff = {} #{ seq #, data }
 latest_seq_in_order = 0
-
 def log(string):
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
 
@@ -79,6 +78,7 @@ if __name__=='__main__':
                     latest_seq_in_order = decoded['sequence']+1
                     log('[handshake] complete at SEQ#{}'.format(latest_seq_in_order))
                     continue
+
                 # second message of handshake
                 msg = json.dumps({"syn":decoded["sequence"],"ack": decoded['sequence']+1, "adv_window": AWINDOW})
             # If the EOF flag is set, exit
